@@ -68,12 +68,20 @@ export default function AboutPage() {
                         </p>
 
                         <div className="space-y-4">
+                            <div>
+                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
+                                    Detailed Actions History
+                                </h3>
+                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
+                                    Actions history for each bill, showing all updates and changes over time.
+                                </p>
+                            </div>
                             <div className="border-l-4 border-blue-500 pl-4 py-2">
                                 <h3 className="font-semibold text-gray-800 dark:text-gray-200">
                                     📱 Mobile Optimizations
                                 </h3>
                                 <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Enhanced mobile experience for tracking legislation on the go
+                                    Enhanced mobile experience for tracking legislation
                                 </p>
                             </div>
 
@@ -103,16 +111,6 @@ export default function AboutPage() {
                                     Access to all available historical legislation beyond the current 10-month window
                                 </p>
                             </div>
-                            <div>
-
-                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
-                                    Detailed Actions History
-                                </h3>
-                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Actions history for each bill, showing all updates and changes over time.
-                                </p>
-                            </div>
-
                             <div className="border-l-4 border-red-500 pl-4 py-2">
                                 <h3 className="font-semibold text-gray-800 dark:text-gray-200">
                                     📊 Advanced Analytics
