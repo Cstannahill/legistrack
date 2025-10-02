@@ -465,7 +465,7 @@ export default async function BillDetailPage({ params }: PageProps) {
     const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
 
     return (
-        <div className="container py-8">
+        <div className="container py-8 overflow-x-hidden">
             {/* Back button */}
             <Link
                 href="/bills"

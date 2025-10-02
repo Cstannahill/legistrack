@@ -41,11 +41,11 @@ export function SummarySection({
 
     return (
         <Card className={cn(
-            "mt-4 border-l-4",
+            "mt-4 border-l-4 overflow-hidden",
             getColorClasses(),
             className
         )}>
-            <div className="p-4">
+            <div className="p-4 overflow-hidden">
                 <div className="mb-3 flex items-center gap-2">
                     {getIcon()}
                     <h4 className="font-semibold text-sm uppercase tracking-wide">
@@ -70,7 +70,7 @@ export function KeyPointsList({ points }: KeyPointsListProps) {
                     <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">
                         {idx + 1}
                     </span>
-                    <span className="leading-relaxed">
+                    <span className="leading-relaxed break-words min-w-0 flex-1">
                         <FormattedText text={point} />
                     </span>
                 </li>
@@ -90,9 +90,11 @@ export function ImpactAreasList({ areas }: ImpactAreasListProps) {
                 <Badge
                     key={idx}
                     variant="secondary"
-                    className="bg-purple-100 text-purple-800 hover:bg-purple-200 dark:bg-purple-900 dark:text-purple-200"
+                    className="bg-purple-100 text-purple-800 hover:bg-purple-200 dark:bg-purple-900 dark:text-purple-200 break-words max-w-full"
                 >
-                    <FormattedText text={area} />
+                    <span className="break-words">
+                        <FormattedText text={area} />
+                    </span>
                 </Badge>
             ))}
         </div>
