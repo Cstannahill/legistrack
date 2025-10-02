@@ -1,0 +1,584 @@
+// Bill Detail Page
+import { notFound } from 'next/navigation'
+import Link from 'next/link'
+import { db } from '@/lib/db'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { StatusBadge } from '@/components/bills/StatusBadge'
+import { formatDate } from '@/lib/utils/date'
+import { Calendar, User, ExternalLink, FileText, ArrowLeft } from 'lucide-react'
+
+interface PageProps {
+    params: Promise<{
+        id: string
+    }>
+}
+
+export default async function BillDetailPage({ params }: PageProps) {
+    const { id } = await params
+
+    const bill = await db.bill.findUnique({
+        where: { id },
+        include: {
+            sponsor: {
+                select: {
+                    fullName: true,
+                    party: true,
+                    state: true,
+                    bioguideId: true,
+                },
+            },
+            cosponsors: {
+                select: {
+                    fullName: true,
+                    party: true,
+                    state: true,
+                },
+                take: 10,
+            },
+            categories: {
+                select: {
+                    id: true,
+                    name: true,
+                    slug: true,
+                    color: true,
+                },
+            },
+            summaries: {
+                orderBy: { generatedAt: 'desc' },
+            },
+            actions: {
+                orderBy: { actionDate: 'desc' },
+                take: 20,
+            },
+            companionBills: {
+                include: {
+                    companionBill: {
+                        include: {
+                            sponsor: {
+                                select: {
+                                    fullName: true,
+                                    party: true,
+                                    state: true,
+                                    bioguideId: true,
+                                },
+                            },
+                            cosponsors: {
+                                select: {
+                                    fullName: true,
+                                    party: true,
+                                    state: true,
+                                },
+                                take: 10,
+                            },
+                            categories: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    slug: true,
+                                    color: true,
+                                },
+                            },
+                            summaries: {
+                                orderBy: { generatedAt: 'desc' },
+                            },
+                            actions: {
+                                orderBy: { actionDate: 'desc' },
+                                take: 20,
+                            },
+                        },
+                    },
+                },
+            },
+            companionOf: {
+                include: {
+                    sourceBill: {
+                        include: {
+                            sponsor: {
+                                select: {
+                                    fullName: true,
+                                    party: true,
+                                    state: true,
+                                    bioguideId: true,
+                                },
+                            },
+                            cosponsors: {
+                                select: {
+                                    fullName: true,
+                                    party: true,
+                                    state: true,
+                                },
+                                take: 10,
+                            },
+                            categories: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    slug: true,
+                                    color: true,
+                                },
+                            },
+                            summaries: {
+                                orderBy: { generatedAt: 'desc' },
+                            },
+                            actions: {
+                                orderBy: { actionDate: 'desc' },
+                                take: 20,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    })
+
+    if (!bill) {
+        notFound()
+    }
+
+    // Collect all companion bills
+    const companions = [
+        ...bill.companionBills.map(cb => cb.companionBill),
+        ...bill.companionOf.map(co => co.sourceBill),
+    ]
+
+    // Create array of all bills to display (primary + companions)
+    const allBills = [bill, ...companions]
+
+    const billIdentifier = `${bill.billType.toUpperCase()}. ${bill.billNumber}`
+    const briefSummary = bill.summaries.find((s) => s.summaryType === 'BRIEF')
+    const standardSummary = bill.summaries.find((s) => s.summaryType === 'STANDARD')
+    const detailedSummary = bill.summaries.find((s) => s.summaryType === 'DETAILED')
+
+    return (
+        <div className="container py-8">
+            {/* Back button */}
+            <Link
+                href="/bills"
+                className="mb-6 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+            >
+                <ArrowLeft className="h-4 w-4" />
+                Back to all bills
+            </Link>
+
+            {/* Header */}
+            <div className="mb-8">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+                    <div className="flex-1">
+                        <div className="mb-2 flex items-center gap-2">
+                            <Badge variant="outline" className="font-mono">
+                                {billIdentifier}
+                            </Badge>
+                            <span className="text-sm text-muted-foreground">
+                                {bill.congress}th Congress
+                            </span>
+                            <StatusBadge status={bill.currentStatus} />
+                        </div>
+                        <h1 className="mb-2 text-3xl font-bold tracking-tight md:text-4xl">
+                            {bill.title}
+                        </h1>
+                        {bill.shortTitle && bill.shortTitle !== bill.title && (
+                            <p className="text-lg text-muted-foreground">
+                                Short Title: {bill.shortTitle}
+                            </p>
+                        )}
+                    </div>
+                </div>
+
+                {/* Meta information */}
+                <div className="flex flex-wrap gap-4 text-sm">
+                    <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <span>
+                            Introduced: <strong>{formatDate(bill.introducedDate)}</strong>
+                        </span>
+                    </div>
+                    {bill.sponsor && (
+                        <div className="flex items-center gap-2">
+                            <User className="h-4 w-4 text-muted-foreground" />
+                            <span>
+                                Sponsor:{' '}
+                                <strong>
+                                    {bill.sponsor.fullName} ({bill.sponsor.party}-
+                                    {bill.sponsor.state})
+                                </strong>
+                            </span>
+                        </div>
+                    )}
+                    {bill.lawNumber && (
+                        <div className="flex items-center gap-2">
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                            <span>
+                                Law Number: <strong>{bill.lawNumber}</strong>
+                            </span>
+                        </div>
+                    )}
+                </div>
+
+                {/* Categories */}
+                {bill.categories.length > 0 && (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        {bill.categories.map((category) => (
+                            <Badge
+                                key={category.id}
+                                variant="secondary"
+                                style={{
+                                    backgroundColor: category.color
+                                        ? `${category.color}15`
+                                        : undefined,
+                                    color: category.color || undefined,
+                                }}
+                            >
+                                {category.name}
+                            </Badge>
+                        ))}
+                    </div>
+                )}
+
+                {/* External links */}
+                {bill.sourceUrl && (
+                    <div className="mt-4">
+                        <a
+                            href={bill.sourceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+                        >
+                            View on Congress.gov
+                            <ExternalLink className="h-3 w-3" />
+                        </a>
+                    </div>
+                )}
+            </div>
+
+            {/* Main content tabs */}
+            <Tabs defaultValue="summary" className="space-y-6">
+                <TabsList>
+                    <TabsTrigger value="summary">Summary</TabsTrigger>
+                    <TabsTrigger value="fulltext">Full Text</TabsTrigger>
+                    <TabsTrigger value="details">Details</TabsTrigger>
+                    <TabsTrigger value="actions">Actions</TabsTrigger>
+                    {bill.cosponsors.length > 0 && (
+                        <TabsTrigger value="cosponsors">
+                            Cosponsors ({bill.cosponsors.length})
+                        </TabsTrigger>
+                    )}
+                </TabsList>
+
+                {/* Summary Tab */}
+                <TabsContent value="summary" className="space-y-4">
+                    {!briefSummary && !standardSummary && !detailedSummary && (
+                        <Card>
+                            <CardContent className="py-8 text-center">
+                                <p className="text-muted-foreground">
+                                    No AI-generated summaries available yet. Summaries are
+                                    generated automatically and will appear here once processed.
+                                </p>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {briefSummary && (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Brief Summary</CardTitle>
+                                <CardDescription>
+                                    Quick overview in 2-3 sentences
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <p className="text-base leading-relaxed">{briefSummary.content}</p>
+                                {briefSummary.keyPoints.length > 0 && (
+                                    <div className="mt-4">
+                                        <h4 className="mb-2 font-semibold">Key Points:</h4>
+                                        <ul className="list-inside list-disc space-y-1 text-sm">
+                                            {briefSummary.keyPoints.map((point, idx) => (
+                                                <li key={idx}>{point}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                                <div className="mt-4 text-xs text-muted-foreground">
+                                    Generated by {briefSummary.aiModel} on{' '}
+                                    {formatDate(briefSummary.generatedAt)}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {standardSummary && (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Standard Summary</CardTitle>
+                                <CardDescription>
+                                    Comprehensive overview in 1-2 paragraphs
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <p className="text-base leading-relaxed">
+                                    {standardSummary.content}
+                                </p>
+                                {standardSummary.keyPoints.length > 0 && (
+                                    <div className="mt-4">
+                                        <h4 className="mb-2 font-semibold">Key Points:</h4>
+                                        <ul className="list-inside list-disc space-y-1 text-sm">
+                                            {standardSummary.keyPoints.map((point, idx) => (
+                                                <li key={idx}>{point}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                                {standardSummary.impactAreas.length > 0 && (
+                                    <div className="mt-4">
+                                        <h4 className="mb-2 font-semibold">Impact Areas:</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {standardSummary.impactAreas.map((area, idx) => (
+                                                <Badge key={idx} variant="outline">
+                                                    {area}
+                                                </Badge>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                <div className="mt-4 text-xs text-muted-foreground">
+                                    Generated by {standardSummary.aiModel} on{' '}
+                                    {formatDate(standardSummary.generatedAt)}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {detailedSummary && (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Detailed Analysis</CardTitle>
+                                <CardDescription>
+                                    In-depth analysis of the legislation
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="prose prose-sm max-w-none dark:prose-invert">
+                                    <p className="text-base leading-relaxed">
+                                        {detailedSummary.content}
+                                    </p>
+                                </div>
+                                {detailedSummary.keyPoints.length > 0 && (
+                                    <div className="mt-4">
+                                        <h4 className="mb-2 font-semibold">Key Points:</h4>
+                                        <ul className="list-inside list-disc space-y-1 text-sm">
+                                            {detailedSummary.keyPoints.map((point, idx) => (
+                                                <li key={idx}>{point}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                                {detailedSummary.impactAreas.length > 0 && (
+                                    <div className="mt-4">
+                                        <h4 className="mb-2 font-semibold">Impact Areas:</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {detailedSummary.impactAreas.map((area, idx) => (
+                                                <Badge key={idx} variant="outline">
+                                                    {area}
+                                                </Badge>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                <div className="mt-4 text-xs text-muted-foreground">
+                                    Generated by {detailedSummary.aiModel} on{' '}
+                                    {formatDate(detailedSummary.generatedAt)}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+                </TabsContent>
+
+                {/* Full Text Tab */}
+                <TabsContent value="fulltext" className="space-y-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Full Legislation Text</CardTitle>
+                            <CardDescription>
+                                Complete text of the bill as introduced
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            {bill.fullText ? (
+                                <div className="prose prose-sm max-w-none dark:prose-invert">
+                                    <pre className="whitespace-pre-wrap rounded-lg bg-muted p-4 text-sm">
+                                        {bill.fullText}
+                                    </pre>
+                                </div>
+                            ) : bill.fullTextUrl ? (
+                                <div className="py-8 text-center">
+                                    <p className="mb-4 text-muted-foreground">
+                                        Full text is available on Congress.gov
+                                    </p>
+                                    <a
+                                        href={bill.fullTextUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-2 text-primary hover:underline"
+                                    >
+                                        View full text on Congress.gov
+                                        <ExternalLink className="h-4 w-4" />
+                                    </a>
+                                </div>
+                            ) : (
+                                <div className="py-8 text-center">
+                                    <p className="text-muted-foreground">
+                                        Full text not yet available. Legislative text is
+                                        typically published shortly after introduction.
+                                    </p>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                {/* Details Tab */}
+                <TabsContent value="details" className="space-y-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Bill Information</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <div>
+                                    <h4 className="mb-1 text-sm font-semibold">Bill Number</h4>
+                                    <p className="text-sm text-muted-foreground">
+                                        {billIdentifier}
+                                    </p>
+                                </div>
+                                <div>
+                                    <h4 className="mb-1 text-sm font-semibold">Congress</h4>
+                                    <p className="text-sm text-muted-foreground">
+                                        {bill.congress}th Congress
+                                    </p>
+                                </div>
+                                <div>
+                                    <h4 className="mb-1 text-sm font-semibold">
+                                        Introduced Date
+                                    </h4>
+                                    <p className="text-sm text-muted-foreground">
+                                        {formatDate(bill.introducedDate)}
+                                    </p>
+                                </div>
+                                <div>
+                                    <h4 className="mb-1 text-sm font-semibold">Status Date</h4>
+                                    <p className="text-sm text-muted-foreground">
+                                        {formatDate(bill.statusDate)}
+                                    </p>
+                                </div>
+                            </div>
+
+                            {bill.officialTitle && (
+                                <div>
+                                    <h4 className="mb-1 text-sm font-semibold">Official Title</h4>
+                                    <p className="text-sm text-muted-foreground">
+                                        {bill.officialTitle}
+                                    </p>
+                                </div>
+                            )}
+
+                            {bill.fullText && (
+                                <div>
+                                    <h4 className="mb-1 text-sm font-semibold">Full Text</h4>
+                                    <div className="prose prose-sm max-w-none text-sm text-muted-foreground dark:prose-invert">
+                                        <p>{bill.fullText.substring(0, 500)}...</p>
+                                    </div>
+                                    {bill.fullTextUrl && (
+                                        <a
+                                            href={bill.fullTextUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="mt-2 inline-flex items-center gap-2 text-sm text-primary hover:underline"
+                                        >
+                                            Read full text
+                                            <ExternalLink className="h-3 w-3" />
+                                        </a>
+                                    )}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                {/* Actions Tab */}
+                <TabsContent value="actions" className="space-y-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Legislative Actions</CardTitle>
+                            <CardDescription>
+                                Chronological history of actions taken on this bill
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            {bill.actions.length === 0 ? (
+                                <p className="text-center text-sm text-muted-foreground">
+                                    No actions recorded yet.
+                                </p>
+                            ) : (
+                                <div className="space-y-4">
+                                    {bill.actions.map((action) => (
+                                        <div
+                                            key={action.id}
+                                            className="border-l-2 border-muted pl-4"
+                                        >
+                                            <div className="mb-1 text-sm font-semibold">
+                                                {formatDate(action.actionDate)}
+                                            </div>
+                                            <p className="text-sm text-muted-foreground">
+                                                {action.text}
+                                            </p>
+                                            {action.actionCode && (
+                                                <Badge
+                                                    variant="outline"
+                                                    className="mt-2 text-xs"
+                                                >
+                                                    {action.actionCode}
+                                                </Badge>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                {/* Cosponsors Tab */}
+                {bill.cosponsors.length > 0 && (
+                    <TabsContent value="cosponsors" className="space-y-4">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Cosponsors</CardTitle>
+                                <CardDescription>
+                                    Members of Congress who have cosponsored this bill
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                    {bill.cosponsors.map((cosponsor) => (
+                                        <div
+                                            key={cosponsor.fullName}
+                                            className="rounded-lg border p-4"
+                                        >
+                                            <h4 className="font-semibold">
+                                                {cosponsor.fullName}
+                                            </h4>
+                                            <p className="text-sm text-muted-foreground">
+                                                {cosponsor.party}-{cosponsor.state}
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
+                )}
+            </Tabs>
+        </div>
+    )
+}

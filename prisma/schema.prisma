@@ -1,0 +1,478 @@
+// Legislative Tracker Database Schema
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// BILLS & LEGISLATION
+// ============================================
+
+model Bill {
+  id                String   @id @default(cuid())
+
+  // Official identifiers
+  billType          String   // "hr", "s", "hjres", "sjres", etc.
+  billNumber        Int
+  congress          Int      // e.g., 118
+
+  // Core information
+  title             String   @db.Text
+  officialTitle     String?  @db.Text
+  shortTitle        String?  @db.Text
+  introducedDate    DateTime
+
+  // Status tracking
+  currentStatus     BillStatus
+  statusDate        DateTime
+  lawNumber         String?  // e.g., "Public Law 118-1"
+
+  // Content
+  fullText          String?  @db.Text
+  fullTextUrl       String?
+
+  // Sponsor & cosponsors
+  sponsorId         String?
+  sponsor           Member?  @relation("Sponsored", fields: [sponsorId], references: [id])
+  cosponsors        Member[] @relation("Cosponsored")
+
+  // Relationships
+  summaries         Summary[]
+  amendments        Amendment[]
+  votes             Vote[]
+  actions           Action[]
+  categories        Category[] @relation("BillCategories")
+  
+  // Companion bills (same legislation in different chambers)
+  companionBills    CompanionBill[] @relation("SourceBill")
+  companionOf       CompanionBill[] @relation("CompanionBill")
+
+  // Metadata
+  sourceUrl         String?
+  lastFetchedAt     DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([congress, billType, billNumber])
+  @@index([currentStatus])
+  @@index([introducedDate])
+  @@index([congress])
+}
+
+enum BillStatus {
+  INTRODUCED
+  REFERRED_TO_COMMITTEE
+  REPORTED_BY_COMMITTEE
+  PASSED_HOUSE
+  PASSED_SENATE
+  RESOLVING_DIFFERENCES
+  PRESENTED_TO_PRESIDENT
+  BECAME_LAW
+  VETOED
+  FAILED
+}
+
+// ============================================
+// COMPANION BILLS (House/Senate Versions)
+// ============================================
+
+model CompanionBill {
+  id                String   @id @default(cuid())
+
+  // Source bill (e.g., HR 4398)
+  sourceBillId      String
+  sourceBill        Bill     @relation("SourceBill", fields: [sourceBillId], references: [id], onDelete: Cascade)
+
+  // Companion bill (e.g., S 2309)
+  companionBillId   String
+  companionBill     Bill     @relation("CompanionBill", fields: [companionBillId], references: [id], onDelete: Cascade)
+
+  // Relationship metadata
+  relationshipType  CompanionType @default(IDENTICAL)
+  verifiedAt        DateTime @default(now())
+  
+  // Metadata
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([sourceBillId, companionBillId])
+  @@index([sourceBillId])
+  @@index([companionBillId])
+}
+
+enum CompanionType {
+  IDENTICAL       // Exact same text in both chambers
+  RELATED         // Similar but with differences
+  SUPERSEDED      // One replaces the other
+}
+
+// ============================================
+// EXECUTIVE ACTIONS
+// ============================================
+
+model ExecutiveOrder {
+  id                String   @id @default(cuid())
+
+  // Official identifiers
+  orderNumber       Int
+  executiveOrderType ExecutiveOrderType
+
+  // Core information
+  title             String   @db.Text
+  signingDate       DateTime
+  publicationDate   DateTime?
+
+  // Content
+  fullText          String?  @db.Text
+  fullTextUrl       String?
+  federalRegisterUrl String?
+
+  // Relationships
+  summaries         Summary[]
+  categories        Category[] @relation("ExecutiveOrderCategories")
+
+  // Metadata
+  presidentName     String
+  sourceUrl         String?
+  lastFetchedAt     DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([orderNumber])
+  @@index([signingDate])
+}
+
+enum ExecutiveOrderType {
+  EXECUTIVE_ORDER
+  PRESIDENTIAL_MEMORANDUM
+  PROCLAMATION
+  DETERMINATION
+}
+
+// ============================================
+// SUMMARIES (AI-GENERATED)
+// ============================================
+
+model Summary {
+  id                String   @id @default(cuid())
+
+  // Relations (polymorphic through separate fields)
+  billId            String?
+  bill              Bill?    @relation(fields: [billId], references: [id])
+
+  executiveOrderId  String?
+  executiveOrder    ExecutiveOrder? @relation(fields: [executiveOrderId], references: [id])
+
+  // Summary content
+  summaryType       SummaryType
+  content           String   @db.Text
+  keyPoints         String[] // Array of bullet points
+  impactAreas       String[] // Who/what this affects
+
+  // Metadata
+  aiModel           String   // "claude-3-opus", "gpt-4", etc.
+  confidence        Float?   // 0-1 score
+  generatedAt       DateTime @default(now())
+
+  // Quality control
+  reviewed          Boolean  @default(false)
+  reviewedBy        String?
+  reviewedAt        DateTime?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([billId])
+  @@index([executiveOrderId])
+}
+
+enum SummaryType {
+  BRIEF           // 2-3 sentences
+  STANDARD        // 1-2 paragraphs
+  DETAILED        // Full analysis
+  ELI5            // Explain like I'm 5
+  KEY_CHANGES     // What changed from previous version
+}
+
+// ============================================
+// CATEGORIES & TAGGING
+// ============================================
+
+model Category {
+  id                String   @id @default(cuid())
+
+  name              String   @unique
+  slug              String   @unique
+  description       String?  @db.Text
+
+  // Hierarchy
+  parentId          String?
+  parent            Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children          Category[] @relation("CategoryHierarchy")
+
+  // Relationships
+  bills             Bill[]     @relation("BillCategories")
+  executiveOrders   ExecutiveOrder[] @relation("ExecutiveOrderCategories")
+
+  // Metadata
+  color             String?    // For UI
+  icon              String?    // Icon identifier
+
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+}
+
+// ============================================
+// MEMBERS OF CONGRESS
+// ============================================
+
+model Member {
+  id                String   @id @default(cuid())
+
+  // Official identifiers
+  bioguideId        String   @unique
+
+  // Personal information
+  firstName         String
+  lastName          String
+  fullName          String
+
+  // Current position
+  chamber           Chamber
+  state             String   // Two-letter code
+  district          Int?     // For House members
+  party             String
+
+  // Service dates
+  termStart         DateTime
+  termEnd           DateTime?
+
+  // Contact & profile
+  imageUrl          String?
+  websiteUrl        String?
+
+  // Relationships
+  sponsoredBills    Bill[]   @relation("Sponsored")
+  cosponsoredBills  Bill[]   @relation("Cosponsored")
+  votes             MemberVote[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([bioguideId])
+}
+
+enum Chamber {
+  HOUSE
+  SENATE
+}
+
+// ============================================
+// VOTES
+// ============================================
+
+model Vote {
+  id                String   @id @default(cuid())
+
+  // Official identifiers
+  rollCallNumber    Int
+  chamber           Chamber
+  congress          Int
+  session           Int
+
+  // Vote information
+  voteDate          DateTime
+  voteQuestion      String   @db.Text
+  voteResult        String   // "Passed", "Failed", etc.
+
+  // Vote counts
+  yesVotes          Int
+  noVotes           Int
+  presentVotes      Int
+  notVotingCount    Int
+
+  // Relationships
+  billId            String?
+  bill              Bill?    @relation(fields: [billId], references: [id])
+
+  individualVotes   MemberVote[]
+
+  // Metadata
+  sourceUrl         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([congress, chamber, rollCallNumber])
+}
+
+model MemberVote {
+  id                String   @id @default(cuid())
+
+  voteId            String
+  vote              Vote     @relation(fields: [voteId], references: [id])
+
+  memberId          String
+  member            Member   @relation(fields: [memberId], references: [id])
+
+  position          VotePosition
+
+  @@unique([voteId, memberId])
+}
+
+enum VotePosition {
+  YEA
+  NAY
+  PRESENT
+  NOT_VOTING
+}
+
+// ============================================
+// AMENDMENTS
+// ============================================
+
+model Amendment {
+  id                String   @id @default(cuid())
+
+  // Official identifiers
+  amendmentNumber   String
+  amendmentType     String
+  congress          Int
+
+  // Core information
+  purpose           String?  @db.Text
+  description       String?  @db.Text
+
+  // Status
+  status            String
+  statusDate        DateTime?
+
+  // Relationships
+  billId            String
+  bill              Bill     @relation(fields: [billId], references: [id])
+
+  // Sponsor
+  sponsorId         String?
+
+  // Metadata
+  proposedDate      DateTime
+  sourceUrl         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([congress, amendmentType, amendmentNumber])
+}
+
+// ============================================
+// ACTIONS & HISTORY
+// ============================================
+
+model Action {
+  id                String   @id @default(cuid())
+
+  billId            String
+  bill              Bill     @relation(fields: [billId], references: [id])
+
+  actionDate        DateTime
+  actionCode        String?
+  actionType        String
+  text              String   @db.Text
+
+  createdAt         DateTime @default(now())
+
+  @@index([billId, actionDate])
+}
+
+// ============================================
+// USER MANAGEMENT & SUBSCRIPTIONS
+// ============================================
+
+model User {
+  id                String   @id @default(cuid())
+
+  email             String   @unique
+  name              String?
+
+  // Preferences
+  emailVerified     Boolean  @default(false)
+  notificationPreferences Json?
+
+  // Subscriptions
+  subscriptions     Subscription[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Subscription {
+  id                String   @id @default(cuid())
+
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+
+  // What to subscribe to
+  subscriptionType  SubscriptionType
+
+  // Specific filters
+  categoryIds       String[] // Subscribe to specific categories
+  keywords          String[] // Subscribe to bills with keywords
+  memberIds         String[] // Follow specific members
+
+  // Notification settings
+  frequency         NotificationFrequency
+  active            Boolean  @default(true)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum SubscriptionType {
+  ALL_BILLS
+  SPECIFIC_CATEGORIES
+  KEYWORD_MATCH
+  MEMBER_ACTIVITY
+  EXECUTIVE_ORDERS
+}
+
+enum NotificationFrequency {
+  INSTANT
+  DAILY_DIGEST
+  WEEKLY_DIGEST
+}
+
+// ============================================
+// JOB TRACKING
+// ============================================
+
+model JobRun {
+  id                String   @id @default(cuid())
+
+  jobName           String
+  status            JobStatus
+
+  startedAt         DateTime @default(now())
+  completedAt       DateTime?
+
+  itemsProcessed    Int      @default(0)
+  itemsFailed       Int      @default(0)
+
+  error             String?  @db.Text
+  metadata          Json?
+
+  @@index([jobName, startedAt])
+}
+
+enum JobStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
