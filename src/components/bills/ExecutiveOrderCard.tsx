@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Badge } from '@/components/ui/badge'
 import { formatDate } from '@/lib/utils/date'
 import { truncate } from '@/lib/utils/formatting'
-import { Calendar, User } from 'lucide-react'
+import { Calendar, User, FileText, Sparkles } from 'lucide-react'
 import { EXECUTIVE_ORDER_TYPE_COLORS, EXECUTIVE_ORDER_TYPE_LABELS } from '@/lib/constants'
 
 interface ExecutiveOrderCardProps {
@@ -15,6 +15,7 @@ interface ExecutiveOrderCardProps {
         title: string
         signingDate: Date | string
         presidentName: string
+        fullText?: string | null
         categories: Array<{
             id: string
             name: string
@@ -30,6 +31,8 @@ interface ExecutiveOrderCardProps {
 export function ExecutiveOrderCard({ executiveOrder }: ExecutiveOrderCardProps) {
     const eoIdentifier = `EO ${executiveOrder.orderNumber}`
     const summary = executiveOrder.summaries?.[0]?.content || ''
+    const hasSummary = !!summary
+    const hasFullText = !!executiveOrder.fullText
     const typeLabel = EXECUTIVE_ORDER_TYPE_LABELS[executiveOrder.executiveOrderType] || executiveOrder.executiveOrderType
     const typeColor = EXECUTIVE_ORDER_TYPE_COLORS[executiveOrder.executiveOrderType] || 'bg-gray-100 text-gray-800'
 
@@ -52,6 +55,30 @@ export function ExecutiveOrderCard({ executiveOrder }: ExecutiveOrderCardProps) 
                             </CardTitle>
                         </div>
                     </div>
+
+                    {/* Availability Indicators */}
+                    {(hasSummary || hasFullText) && (
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                            {hasSummary && (
+                                <Badge
+                                    variant="secondary"
+                                    className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 text-xs"
+                                >
+                                    <Sparkles className="mr-1 h-3 w-3" />
+                                    Summary
+                                </Badge>
+                            )}
+                            {hasFullText && (
+                                <Badge
+                                    variant="secondary"
+                                    className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 text-xs"
+                                >
+                                    <FileText className="mr-1 h-3 w-3" />
+                                    Full Text
+                                </Badge>
+                            )}
+                        </div>
+                    )}
                 </CardHeader>
 
                 <CardContent className="space-y-3">

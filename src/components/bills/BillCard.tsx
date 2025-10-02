@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from './StatusBadge'
 import { formatDate } from '@/lib/utils/date'
 import { truncate } from '@/lib/utils/formatting'
-import { Calendar, User } from 'lucide-react'
+import { Calendar, User, FileText, Sparkles } from 'lucide-react'
 
 interface BillCardProps {
     bill: {
@@ -16,6 +16,7 @@ interface BillCardProps {
         title: string
         currentStatus: string
         introducedDate: Date | string
+        fullText?: string | null
         sponsor?: {
             fullName: string
             party: string
@@ -44,6 +45,8 @@ interface BillCardProps {
 export function BillCard({ bill }: BillCardProps) {
     const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
     const summary = bill.summaries?.[0]?.content || ''
+    const hasSummary = !!summary
+    const hasFullText = !!bill.fullText
 
     // Get companion bills for display
     const companions = bill.companionBills?.map(cb => cb.companionBill) || []
@@ -77,6 +80,30 @@ export function BillCard({ bill }: BillCardProps) {
                         </div>
                         <StatusBadge status={bill.currentStatus} />
                     </div>
+
+                    {/* Availability Indicators */}
+                    {(hasSummary || hasFullText) && (
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                            {hasSummary && (
+                                <Badge
+                                    variant="secondary"
+                                    className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 text-xs"
+                                >
+                                    <Sparkles className="mr-1 h-3 w-3" />
+                                    Summary
+                                </Badge>
+                            )}
+                            {hasFullText && (
+                                <Badge
+                                    variant="secondary"
+                                    className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 text-xs"
+                                >
+                                    <FileText className="mr-1 h-3 w-3" />
+                                    Full Text
+                                </Badge>
+                            )}
+                        </div>
+                    )}
                 </CardHeader>
 
                 <CardContent className="space-y-3">

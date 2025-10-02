@@ -27,7 +27,7 @@ export function LegislativeFullText({ text, billIdentifier }: LegislativeFullTex
                                 </div>
                             </div>
                         )}
-                        
+
                         {parsed.billInfo && (
                             <div className="flex items-start gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
                                 <FileText className="h-4 w-4 mt-1 text-slate-600 dark:text-slate-400 shrink-0" />

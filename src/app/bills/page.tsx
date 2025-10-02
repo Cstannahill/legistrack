@@ -145,7 +145,15 @@ export default async function BillsPage({ searchParams }: PageProps) {
             skip: legislationType === 'BILLS' ? skip : 0,
             take: legislationType === 'BILLS' ? limit : legislationType === 'ALL' ? Math.ceil(limit / 2) : 0,
             orderBy: { introducedDate: 'desc' },
-            include: {
+            select: {
+                id: true,
+                billType: true,
+                billNumber: true,
+                congress: true,
+                title: true,
+                currentStatus: true,
+                introducedDate: true,
+                fullText: true,
                 sponsor: {
                     select: {
                         fullName: true,
@@ -173,7 +181,14 @@ export default async function BillsPage({ searchParams }: PageProps) {
             skip: legislationType === 'EXECUTIVE_ORDERS' ? skip : 0,
             take: legislationType === 'EXECUTIVE_ORDERS' ? limit : legislationType === 'ALL' ? Math.ceil(limit / 2) : 0,
             orderBy: { signingDate: 'desc' },
-            include: {
+            select: {
+                id: true,
+                orderNumber: true,
+                executiveOrderType: true,
+                title: true,
+                signingDate: true,
+                presidentName: true,
+                fullText: true,
                 categories: {
                     select: {
                         id: true,
@@ -249,11 +264,36 @@ export default async function BillsPage({ searchParams }: PageProps) {
                         </p>
                     </div>
 
+                    {/* Pagination - Top */}
+                    {totalPages > 1 && (
+                        <div className="mb-6 flex items-center justify-center gap-2">
+                            {page > 1 && (
+                                <a
+                                    href={`?${new URLSearchParams({ ...params, page: String(page - 1) }).toString()}`}
+                                    className="rounded-md border px-4 py-2 text-sm hover:bg-accent"
+                                >
+                                    Previous
+                                </a>
+                            )}
+                            <span className="px-4 py-2 text-sm">
+                                Page {page} of {totalPages}
+                            </span>
+                            {page < totalPages && (
+                                <a
+                                    href={`?${new URLSearchParams({ ...params, page: String(page + 1) }).toString()}`}
+                                    className="rounded-md border px-4 py-2 text-sm hover:bg-accent"
+                                >
+                                    Next
+                                </a>
+                            )}
+                        </div>
+                    )}
+
                     <Suspense fallback={<BillList items={[]} loading />}>
                         <BillList items={items} />
                     </Suspense>
 
-                    {/* Pagination */}
+                    {/* Pagination - Bottom */}
                     {totalPages > 1 && (
                         <div className="mt-8 flex items-center justify-center gap-2">
                             {page > 1 && (
