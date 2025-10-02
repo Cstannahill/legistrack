@@ -73,7 +73,7 @@ export const batchSummarizeBillsJob = inngest.createFunction(
       await db.jobRun.create({
         data: {
           jobName: "batch-summarize-bills",
-          status: "SUCCESS",
+          status: "COMPLETED",
           itemsProcessed: queuedJobs.length,
           startedAt: new Date(),
           completedAt: new Date(),

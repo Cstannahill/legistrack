@@ -1,6 +1,6 @@
 // Background Job: Fetch Bills from Congress.gov
 import { inngest } from "@/inngest/client";
-import { fetchLatestBills, fetchBillDetails } from "@/lib/api/congress";
+import { fetchLatestBills } from "@/lib/api/congress";
 import { db } from "@/lib/db";
 import { CURRENT_CONGRESS } from "@/lib/constants";
 import { BillStatus } from "@prisma/client";
@@ -98,7 +98,10 @@ export const fetchBillsJob = inngest.createFunction(
 
       // Step 3: Trigger summarization for new bills
       await step.run("trigger-summarization", async () => {
-        const newBills = results.filter((r) => r.action === "created");
+        const newBills = results.filter(
+          (r): r is { id: string; action: string } =>
+            r.action === "created" && "id" in r
+        );
 
         for (const { id } of newBills) {
           if (id) {

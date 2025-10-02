@@ -91,7 +91,10 @@ export const fetchExecutiveOrdersJob = inngest.createFunction(
 
       // Trigger summarization for new orders
       await step.run("trigger-summarization", async () => {
-        const newOrders = results.filter((r) => r.action === "created");
+        const newOrders = results.filter(
+          (r): r is { id: string; action: string } =>
+            r.action === "created" && "id" in r
+        );
 
         for (const { id } of newOrders) {
           if (id) {
