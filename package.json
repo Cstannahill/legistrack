@@ -31,6 +31,8 @@
     "tag-legislation": "tsx scripts/tag-legislation.ts",
     "tag-bills": "cross-env LEGISLATION_TYPE=bills tsx scripts/tag-legislation.ts",
     "tag-executive-orders": "cross-env LEGISLATION_TYPE=executive-orders tsx scripts/tag-legislation.ts",
+    "check-tag-status": "tsx scripts/check-tag-status.ts",
+    "migrate-bill-categories": "tsx scripts/migrate-bill-categories.ts",
     "gen-sum": "tsx scripts/test-generate-summary.ts",
     "test-single-bill": "tsx scripts/test-single-bill.ts",
     "test-fetch-veteran-bills": "tsx scripts/test-fetch-veteran-bills.ts",

@@ -42,7 +42,7 @@ interface BillCardProps {
 }
 
 export function BillCard({ bill }: BillCardProps) {
-    const billIdentifier = `${bill.billType.toUpperCase()}. ${bill.billNumber}`
+    const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
     const summary = bill.summaries?.[0]?.content || ''
 
     // Get companion bills for display
@@ -64,7 +64,7 @@ export function BillCard({ bill }: BillCardProps) {
                                         variant="outline"
                                         className="font-mono text-xs"
                                     >
-                                        {companion.billType.toUpperCase()}. {companion.billNumber}
+                                        {companion.billType.toUpperCase()} {companion.billNumber}
                                     </Badge>
                                 ))}
                                 <span className="text-xs text-muted-foreground">
