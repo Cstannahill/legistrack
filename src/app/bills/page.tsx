@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { BillList } from '@/components/bills/BillList'
 import { SearchBar } from '@/components/search/SearchBar'
 import { FilterPanel } from '@/components/search/FilterPanel'
+import { MobileFilterDrawer } from '@/components/search/MobileFilterDrawer'
 import { CURRENT_CONGRESS } from '@/lib/constants'
 
 interface PageProps {
@@ -14,6 +15,7 @@ interface PageProps {
         category?: string
         congress?: string
         search?: string
+        showIncomplete?: string // 'true' to show bills without fullText
     }>
 }
 
@@ -23,6 +25,7 @@ export default async function BillsPage({ searchParams }: PageProps) {
     const limit = 20
     const skip = (page - 1) * limit
     const legislationType = params.type || 'ALL' // 'ALL', 'BILLS', 'EXECUTIVE_ORDERS'
+    const showIncomplete = params.showIncomplete === 'true' // Default: false (only show complete bills)
 
     // Determine what to fetch based on type filter
     // If status filter is applied, only fetch bills (EOs don't have status)
@@ -31,6 +34,12 @@ export default async function BillsPage({ searchParams }: PageProps) {
 
     // Build where clause for bills
     const billWhere: Record<string, unknown> = {}
+
+    // By default, only show bills with full text (better UX - complete content)
+    // Users can toggle to see incomplete bills
+    if (!showIncomplete && shouldFetchBills) {
+        billWhere.fullText = { not: null }
+    }
 
     if (params.status) billWhere.currentStatus = params.status
     if (params.congress) billWhere.congress = parseInt(params.congress, 10)
@@ -248,9 +257,14 @@ export default async function BillsPage({ searchParams }: PageProps) {
                 <SearchBar />
             </div>
 
+            {/* Mobile Filter Button */}
+            <div className="mb-4 lg:hidden">
+                <MobileFilterDrawer categories={categories} />
+            </div>
+
             <div className="flex flex-col gap-8 lg:flex-row">
-                {/* Sidebar Filters */}
-                <aside className="w-full lg:w-64 lg:shrink-0">
+                {/* Sidebar Filters - Desktop Only */}
+                <aside className="hidden w-full lg:block lg:w-64 lg:shrink-0">
                     <div className="sticky top-4">
                         <FilterPanel categories={categories} />
                     </div>

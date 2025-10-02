@@ -51,7 +51,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
     const typeColor = EXECUTIVE_ORDER_TYPE_COLORS[executiveOrder.executiveOrderType] || 'bg-gray-100 text-gray-800'
 
     return (
-        <div className="container py-8">
+        <div className="container py-8 overflow-x-hidden">
             {/* Back Button */}
             <Link
                 href="/bills?type=EXECUTIVE_ORDERS"

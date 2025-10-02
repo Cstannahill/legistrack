@@ -3,6 +3,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import {
     Select,
     SelectContent,
@@ -30,6 +31,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
     const currentStatus = searchParams.get('status')
     const currentCategory = searchParams.get('category')
     const currentCongress = searchParams.get('congress') || String(CURRENT_CONGRESS)
+    const showIncomplete = searchParams.get('showIncomplete') === 'true'
 
     const updateFilter = (key: string, value: string | null) => {
         const params = new URLSearchParams(searchParams.toString())
@@ -46,7 +48,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
         router.push('/bills')
     }
 
-    const hasActiveFilters = currentStatus || currentCategory || currentType !== 'ALL'
+    const hasActiveFilters = currentStatus || currentCategory || currentType !== 'ALL' || showIncomplete
 
     return (
         <div className="space-y-6">
@@ -61,6 +63,29 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                     )}
                 </div>
             </div>
+
+            {/* Show Incomplete Bills Toggle - Only for bills */}
+            {currentType !== 'EXECUTIVE_ORDERS' && (
+                <div className="rounded-lg border bg-muted/50 p-4">
+                    <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                            <label htmlFor="show-incomplete" className="text-sm font-medium">
+                                Show Incomplete Bills
+                            </label>
+                            <p className="text-xs text-muted-foreground">
+                                Include bills without full text
+                            </p>
+                        </div>
+                        <Switch
+                            id="show-incomplete"
+                            checked={showIncomplete}
+                            onCheckedChange={(checked) => {
+                                updateFilter('showIncomplete', checked ? 'true' : null)
+                            }}
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* Type Filter */}
             <div>
