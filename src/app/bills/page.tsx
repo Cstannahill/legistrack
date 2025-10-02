@@ -48,23 +48,62 @@ export default async function BillsPage({ searchParams }: PageProps) {
         const isExactWordMatch = !!quotedMatch;
         const searchTerm = quotedMatch ? quotedMatch[1] : params.search;
 
-        // Parse potential bill number from query (e.g., "HR 4398", "S 2309")
-        const billNumberMatch = searchTerm.match(/^([A-Z]+)\s*(\d+)$/i);
+        // Remove periods from search term for better matching (e.g., "HR. 5374" -> "HR 5374")
+        const cleanedSearchTerm = searchTerm.replace(/\./g, '').trim();
+
+        // Parse potential bill number from query (e.g., "HR 4398", "HR. 5374", "S 2309", "hr 537")
+        // Now supports partial matches - just the number, or type + partial number
+        const billNumberMatch = cleanedSearchTerm.match(/^([A-Z]+)?\s*(\d+)$/i);
 
         if (billNumberMatch) {
-            const billType = billNumberMatch[1].toUpperCase();
-            const billNumber = parseInt(billNumberMatch[2], 10);
+            const billType = billNumberMatch[1]?.toUpperCase();
+            const billNumberStr = billNumberMatch[2];
+            const billNumber = parseInt(billNumberStr, 10);
 
-            billWhere.OR = [
-                { title: { contains: searchTerm, mode: 'insensitive' } },
-                { officialTitle: { contains: searchTerm, mode: 'insensitive' } },
-                {
+            // Build OR conditions for bill number matching ONLY
+            // Don't include title search when user is clearly searching for a bill number
+            const orConditions: Array<Record<string, unknown>> = [];
+
+            // If we have a bill type (e.g., "HR"), match bills of that type
+            if (billType) {
+                // Exact match: HR 5374
+                orConditions.push({
                     AND: [
                         { billType: { equals: billType, mode: 'insensitive' } },
                         { billNumber: billNumber },
                     ],
-                },
-            ];
+                });
+
+                // Partial match: HR 537 should match HR 5371, HR 5374, etc.
+                // Convert search string to start and end of range
+                // "537" (3 digits) -> 5370 to 5379
+                // "53" (2 digits) -> 5300 to 5399
+                const numDigits = billNumberStr.length;
+                const rangeStart = billNumber * Math.pow(10, Math.max(0, 4 - numDigits));
+                const rangeEnd = rangeStart + Math.pow(10, Math.max(0, 4 - numDigits));
+
+                orConditions.push({
+                    AND: [
+                        { billType: { equals: billType, mode: 'insensitive' } },
+                        { billNumber: { gte: rangeStart, lt: rangeEnd } },
+                    ],
+                });
+            } else {
+                // No bill type specified, search by number across all types
+                // Exact match
+                orConditions.push({ billNumber: billNumber });
+
+                // Partial match for the number
+                const numDigits = billNumberStr.length;
+                const rangeStart = billNumber * Math.pow(10, Math.max(0, 4 - numDigits));
+                const rangeEnd = rangeStart + Math.pow(10, Math.max(0, 4 - numDigits));
+
+                orConditions.push({
+                    billNumber: { gte: rangeStart, lt: rangeEnd }
+                });
+            }
+
+            billWhere.OR = orConditions;
         } else if (isExactWordMatch) {
             // For exact word matching, search for word with spaces/punctuation boundaries
             billWhere.OR = [
@@ -126,33 +165,6 @@ export default async function BillsPage({ searchParams }: PageProps) {
                     where: { summaryType: 'BRIEF' },
                     take: 1,
                 },
-                companionBills: {
-                    include: {
-                        companionBill: {
-                            select: {
-                                id: true,
-                                billType: true,
-                                billNumber: true,
-                                congress: true,
-                                title: true,
-                                currentStatus: true,
-                                introducedDate: true,
-                            },
-                        },
-                    },
-                },
-                companionOf: {
-                    include: {
-                        sourceBill: {
-                            select: {
-                                id: true,
-                                billType: true,
-                                billNumber: true,
-                                congress: true,
-                            },
-                        },
-                    },
-                },
             },
         }) : Promise.resolve([]),
         shouldFetchBills ? db.bill.count({ where: billWhere }) : Promise.resolve(0),
@@ -188,20 +200,9 @@ export default async function BillsPage({ searchParams }: PageProps) {
         }),
     ])
 
-    // Group companion bills to avoid showing duplicates
-    const seenBillIds = new Set<string>()
-    const bills = allBills.filter((bill) => {
-        // If this bill is a companion OF another bill, skip it
-        if (bill.companionOf.length > 0) {
-            // Check if the source bill is already in our list
-            const sourceBillId = bill.companionOf[0].sourceBill.id
-            if (allBills.some(b => b.id === sourceBillId)) {
-                seenBillIds.add(bill.id)
-                return false // Skip this one, show the source instead
-            }
-        }
-        return true
-    })
+    // Since we removed companion bill loading from list view for performance,
+    // we can now directly use allBills without filtering
+    const bills = allBills
 
     // Merge and sort bills and executive orders
     const items = [

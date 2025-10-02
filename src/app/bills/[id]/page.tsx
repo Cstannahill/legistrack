@@ -17,7 +17,7 @@ interface PageProps {
 
 // Helper component to render bill content
 function BillContent({ bill }: { bill: any }) {
-    const billIdentifier = `${bill.billType.toUpperCase()}. ${bill.billNumber}`
+    const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
     const briefSummary = bill.summaries?.find((s: any) => s.summaryType === 'BRIEF')
     const standardSummary = bill.summaries?.find((s: any) => s.summaryType === 'STANDARD')
     const detailedSummary = bill.summaries?.find((s: any) => s.summaryType === 'DETAILED')
@@ -489,7 +489,7 @@ export default async function BillDetailPage({ params }: PageProps) {
     // Check if there are companions
     const hasCompanions = companions.length > 0
 
-    const billIdentifier = `${bill.billType.toUpperCase()}. ${bill.billNumber}`
+    const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
 
     return (
         <div className="container py-8">
@@ -512,7 +512,7 @@ export default async function BillDetailPage({ params }: PageProps) {
                             </Badge>
                             {companions.map((companion: any) => (
                                 <Badge key={companion.id} variant="outline" className="font-mono">
-                                    {companion.billType.toUpperCase()}. {companion.billNumber}
+                                    {companion.billType.toUpperCase()} {companion.billNumber}
                                 </Badge>
                             ))}
                             <span className="text-sm text-muted-foreground">

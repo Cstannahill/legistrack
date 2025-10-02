@@ -16,8 +16,8 @@ export function Header() {
                     <Link href="/bills" className="text-sm font-medium transition-colors hover:text-primary">
                         Bills
                     </Link>
-                    <Link href="/categories" className="text-sm font-medium transition-colors hover:text-primary">
-                        Categories
+                    <Link href="/about" className="text-sm font-medium transition-colors hover:text-primary">
+                        About
                     </Link>
                 </nav>
 
