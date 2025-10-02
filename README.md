@@ -2,6 +2,10 @@
 
 A robust, scalable web application that automatically tracks, categorizes, and summarizes U.S. federal legislation in plain, understandable language.
 
+## ✨ Recent Improvements
+
+- **Batch Summarization Fixed**: The batch summarization script now processes oldest bills first (more likely to have published text) and makes individual API calls to fetch fresh data and full text for each bill, ensuring accurate introducedDate and fullText fields.
+
 ## 🌟 Features
 
 - **Automated Data Collection**: Continuously fetches legislative data from Congress.gov and Federal Register

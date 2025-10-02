@@ -107,7 +107,8 @@ async function main() {
   console.log(`🧠 AI Model: ${modelName}\n`);
 
   try {
-    // Find bills without STANDARD summaries for the selected model
+    // Find bills without STANDARD summaries
+    // Order by oldest first (more likely to have published text)
     const billsToSummarize = await db.bill.findMany({
       where: {
         summaries: {
@@ -117,7 +118,7 @@ async function main() {
         },
       },
       take: BATCH_SIZE,
-      orderBy: { introducedDate: "desc" },
+      orderBy: { introducedDate: "asc" }, // Oldest first - more likely to have text available
       select: {
         id: true,
         billType: true,

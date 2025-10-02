@@ -1,6 +1,7 @@
 // Test script with mock data (no API key required)
 import { config } from "dotenv";
 import { db } from "@/lib/db";
+import { BillStatus } from "@prisma/client";
 
 // Load environment variables from .env file
 config();
