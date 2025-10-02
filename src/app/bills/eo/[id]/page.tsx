@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SummarySection, KeyPointsList } from '@/components/bills/SummarySection'
 import { LegislativeFullText } from '@/components/bills/LegislativeFullText'
+import { FormattedText } from '@/components/ui/FormattedText'
 import { formatDate } from '@/lib/utils/date'
 import { formatExecutiveOrderText } from '@/lib/utils/html-to-text'
 import { Calendar, User, ExternalLink, FileText, ArrowLeft } from 'lucide-react'
@@ -171,7 +172,9 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                                 </CardDescription>
                             </CardHeader>
                             <CardContent>
-                                <p className="text-base leading-relaxed">{briefSummary.content}</p>
+                                <p className="text-base leading-relaxed">
+                                    <FormattedText text={briefSummary.content} />
+                                </p>
                                 {briefSummary.keyPoints && briefSummary.keyPoints.length > 0 && (
                                     <SummarySection title="Key Points" variant="keyPoints">
                                         <KeyPointsList points={briefSummary.keyPoints} />
@@ -195,7 +198,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                             </CardHeader>
                             <CardContent>
                                 <p className="text-base leading-relaxed">
-                                    {standardSummary.content}
+                                    <FormattedText text={standardSummary.content} />
                                 </p>
                                 {standardSummary.keyPoints && standardSummary.keyPoints.length > 0 && (
                                     <SummarySection title="Key Points" variant="keyPoints">
@@ -220,7 +223,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                             </CardHeader>
                             <CardContent>
                                 <p className="text-base leading-relaxed">
-                                    {detailedSummary.content}
+                                    <FormattedText text={detailedSummary.content} />
                                 </p>
                                 {detailedSummary.keyPoints && detailedSummary.keyPoints.length > 0 && (
                                     <SummarySection title="Key Points" variant="keyPoints">
@@ -239,7 +242,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                 {/* Full Text Tab */}
                 <TabsContent value="fulltext" className="space-y-4">
                     {executiveOrder.fullText ? (
-                        <LegislativeFullText 
+                        <LegislativeFullText
                             text={formatExecutiveOrderText(executiveOrder.fullText)}
                             billIdentifier={`EO ${executiveOrder.orderNumber}`}
                         />

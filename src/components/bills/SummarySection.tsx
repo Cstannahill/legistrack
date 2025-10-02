@@ -2,6 +2,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Target, AlertCircle } from "lucide-react";
+import { FormattedText } from "@/components/ui/FormattedText";
 
 interface SummarySectionProps {
     title: string;
@@ -69,7 +70,9 @@ export function KeyPointsList({ points }: KeyPointsListProps) {
                     <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-700 dark:bg-blue-900 dark:text-blue-300">
                         {idx + 1}
                     </span>
-                    <span className="leading-relaxed">{point}</span>
+                    <span className="leading-relaxed">
+                        <FormattedText text={point} />
+                    </span>
                 </li>
             ))}
         </ul>
@@ -89,7 +92,7 @@ export function ImpactAreasList({ areas }: ImpactAreasListProps) {
                     variant="secondary"
                     className="bg-purple-100 text-purple-800 hover:bg-purple-200 dark:bg-purple-900 dark:text-purple-200"
                 >
-                    {area}
+                    <FormattedText text={area} />
                 </Badge>
             ))}
         </div>

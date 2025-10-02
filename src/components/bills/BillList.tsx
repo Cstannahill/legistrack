@@ -12,6 +12,7 @@ type BillItem = {
     title: string
     currentStatus: string
     introducedDate: Date | string
+    fullText?: string | null
     sponsor?: {
         fullName: string
         party: string
@@ -44,6 +45,7 @@ type ExecutiveOrderItem = {
     title: string
     signingDate: Date | string
     presidentName: string
+    fullText?: string | null
     categories: Array<{
         id: string
         name: string

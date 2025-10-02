@@ -8,7 +8,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/bills/StatusBadge'
 import { SummarySection, KeyPointsList, ImpactAreasList } from '@/components/bills/SummarySection'
 import { LegislativeFullText } from '@/components/bills/LegislativeFullText'
+import { FormattedText } from '@/components/ui/FormattedText'
 import { formatDate } from '@/lib/utils/date'
+import { getBillCongressUrl } from '@/lib/utils/congress-url'
 import { Calendar, User, ExternalLink, FileText, ArrowLeft } from 'lucide-react'
 
 interface PageProps {
@@ -20,6 +22,7 @@ interface PageProps {
 // Helper component to render bill content
 function BillContent({ bill }: { bill: any }) {
     const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
+    const congressGovUrl = getBillCongressUrl(bill)
     const briefSummary = bill.summaries?.find((s: any) => s.summaryType === 'BRIEF')
     const standardSummary = bill.summaries?.find((s: any) => s.summaryType === 'STANDARD')
     const detailedSummary = bill.summaries?.find((s: any) => s.summaryType === 'DETAILED')
@@ -60,7 +63,9 @@ function BillContent({ bill }: { bill: any }) {
                             </CardDescription>
                         </CardHeader>
                         <CardContent>
-                            <p className="text-base leading-relaxed">{briefSummary.content}</p>
+                            <p className="text-base leading-relaxed">
+                                <FormattedText text={briefSummary.content} />
+                            </p>
                             {briefSummary.keyPoints && briefSummary.keyPoints.length > 0 && (
                                 <SummarySection title="Key Points" variant="keyPoints">
                                     <KeyPointsList points={briefSummary.keyPoints} />
@@ -84,7 +89,7 @@ function BillContent({ bill }: { bill: any }) {
                         </CardHeader>
                         <CardContent>
                             <p className="text-base leading-relaxed">
-                                {standardSummary.content}
+                                <FormattedText text={standardSummary.content} />
                             </p>
                             {standardSummary.keyPoints && standardSummary.keyPoints.length > 0 && (
                                 <SummarySection title="Key Points" variant="keyPoints">
@@ -115,7 +120,7 @@ function BillContent({ bill }: { bill: any }) {
                         <CardContent>
                             <div className="prose prose-sm max-w-none dark:prose-invert">
                                 <p className="text-base leading-relaxed">
-                                    {detailedSummary.content}
+                                    <FormattedText text={detailedSummary.content} />
                                 </p>
                             </div>
                             {detailedSummary.keyPoints && detailedSummary.keyPoints.length > 0 && (
@@ -140,7 +145,7 @@ function BillContent({ bill }: { bill: any }) {
             {/* Full Text Tab */}
             <TabsContent value="fulltext" className="space-y-4">
                 {bill.fullText ? (
-                    <LegislativeFullText 
+                    <LegislativeFullText
                         text={bill.fullText}
                         billIdentifier={billIdentifier}
                     />
@@ -234,19 +239,17 @@ function BillContent({ bill }: { bill: any }) {
                             </div>
                         )}
 
-                        {bill.sourceUrl && (
-                            <div>
-                                <a
-                                    href={bill.sourceUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
-                                >
-                                    View on Congress.gov
-                                    <ExternalLink className="h-3 w-3" />
-                                </a>
-                            </div>
-                        )}
+                        <div>
+                            <a
+                                href={congressGovUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+                            >
+                                View on Congress.gov
+                                <ExternalLink className="h-3 w-3" />
+                            </a>
+                        </div>
                     </CardContent>
                 </Card>
             </TabsContent>
@@ -552,19 +555,17 @@ export default async function BillDetailPage({ params }: PageProps) {
                 )}
 
                 {/* External links */}
-                {bill.sourceUrl && (
-                    <div className="mt-4">
-                        <a
-                            href={bill.sourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
-                        >
-                            View on Congress.gov
-                            <ExternalLink className="h-3 w-3" />
-                        </a>
-                    </div>
-                )}
+                <div className="mt-4">
+                    <a
+                        href={getBillCongressUrl(bill)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+                    >
+                        View on Congress.gov
+                        <ExternalLink className="h-3 w-3" />
+                    </a>
+                </div>
             </div>
 
             {/* Main content - with chamber tabs if companions exist */}
