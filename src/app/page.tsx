@@ -22,7 +22,7 @@ export default function HomePage() {
             <div className="space-x-4">
               <Link href="/bills">
                 <Button size="lg">
-                  Browse Bills
+                  Browse Legislation
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </Link>

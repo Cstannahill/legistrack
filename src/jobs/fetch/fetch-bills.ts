@@ -5,6 +5,52 @@ import { db } from "@/lib/db";
 import { CURRENT_CONGRESS } from "@/lib/constants";
 import { BillStatus } from "@prisma/client";
 
+const FETCH_PAGE_SIZE = Math.min(
+  parseInt(process.env.FETCH_BILLS_BATCH_SIZE || "250", 10),
+  250
+);
+const FETCH_MAX_BATCHES = Math.max(
+  1,
+  parseInt(process.env.FETCH_BILLS_MAX_BATCHES || "1", 10)
+);
+const FETCH_START_DATE = process.env.FETCH_BILLS_START_DATE;
+const FETCH_END_DATE = process.env.FETCH_BILLS_END_DATE;
+const FETCH_LOOKBACK_DAYS = process.env.FETCH_BILLS_LOOKBACK_DAYS;
+
+function resolveDateRange(): { fromDateTime?: string; toDateTime?: string } {
+  const normalize = (value: string) => {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new Error(`Invalid FETCH_BILLS date value: '${value}'`);
+    }
+    return parsed.toISOString();
+  };
+
+  if (FETCH_LOOKBACK_DAYS) {
+    const days = parseInt(FETCH_LOOKBACK_DAYS, 10);
+    if (Number.isNaN(days) || days <= 0) {
+      throw new Error(
+        `FETCH_BILLS_LOOKBACK_DAYS must be a positive integer. Received '${FETCH_LOOKBACK_DAYS}'.`
+      );
+    }
+
+    const to = FETCH_END_DATE
+      ? normalize(FETCH_END_DATE)
+      : new Date().toISOString();
+    const toDate = new Date(to);
+    const fromDate = new Date(toDate.getTime() - days * 24 * 60 * 60 * 1000);
+    return {
+      fromDateTime: fromDate.toISOString(),
+      toDateTime: to,
+    };
+  }
+
+  return {
+    fromDateTime: FETCH_START_DATE ? normalize(FETCH_START_DATE) : undefined,
+    toDateTime: FETCH_END_DATE ? normalize(FETCH_END_DATE) : undefined,
+  };
+}
+
 export const fetchBillsJob = inngest.createFunction(
   { id: "fetch-bills", retries: 3 },
   { cron: "0 */6 * * *" }, // Every 6 hours
@@ -22,15 +68,55 @@ export const fetchBillsJob = inngest.createFunction(
     });
 
     try {
+      const { fromDateTime, toDateTime } = resolveDateRange();
+
       // Step 1: Fetch latest bills from Congress.gov
       const bills = await step.run("fetch-bills-from-api", async () => {
-        console.log(`Fetching bills for Congress ${CURRENT_CONGRESS}...`);
-        return await fetchLatestBills({
-          congress: CURRENT_CONGRESS,
-          limit: 250,
-          offset: 0,
-        });
+        if (fromDateTime || toDateTime) {
+          console.log(
+            `Fetching bills for Congress ${CURRENT_CONGRESS} within ${
+              fromDateTime ?? "(open)"
+            } → ${toDateTime ?? "(open)"}`
+          );
+        } else {
+          console.log(
+            `Fetching latest bills for Congress ${CURRENT_CONGRESS}...`
+          );
+        }
+
+        const aggregated: Awaited<ReturnType<typeof fetchLatestBills>> = [];
+
+        for (let batch = 0; batch < FETCH_MAX_BATCHES; batch++) {
+          const offset = batch * FETCH_PAGE_SIZE;
+          const batchResults = await fetchLatestBills({
+            congress: CURRENT_CONGRESS,
+            limit: FETCH_PAGE_SIZE,
+            offset,
+            fromDateTime,
+            toDateTime,
+          });
+
+          if (batchResults.length === 0) {
+            break;
+          }
+
+          aggregated.push(...batchResults);
+
+          if (batchResults.length < FETCH_PAGE_SIZE) {
+            break;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+
+        return aggregated;
       });
+
+      if (bills.length === 0) {
+        console.log(
+          "No bills returned from Congress.gov for this configuration."
+        );
+      }
 
       // Step 2: Process each bill
       const results = await step.run("process-bills", async () => {
@@ -49,16 +135,23 @@ export const fetchBillsJob = inngest.createFunction(
               continue;
             }
 
-            const introducedDateRaw =
-              billData.introducedDate ||
-              billData.updateDate ||
-              billData.latestAction?.actionDate;
-            const introducedDate = introducedDateRaw
-              ? new Date(introducedDateRaw)
+            const introducedDatePrimary = billData.introducedDate
+              ? new Date(billData.introducedDate)
               : undefined;
-            const validIntroducedDate =
-              introducedDate && !Number.isNaN(introducedDate.getTime())
-                ? introducedDate
+            const introducedDateFallbackRaw =
+              billData.updateDate || billData.latestAction?.actionDate;
+            const introducedDateFallback = introducedDateFallbackRaw
+              ? new Date(introducedDateFallbackRaw)
+              : undefined;
+            const validIntroducedPrimary =
+              introducedDatePrimary &&
+              !Number.isNaN(introducedDatePrimary.getTime())
+                ? introducedDatePrimary
+                : undefined;
+            const validIntroducedFallback =
+              introducedDateFallback &&
+              !Number.isNaN(introducedDateFallback.getTime())
+                ? introducedDateFallback
                 : undefined;
 
             const existing = await db.bill.findUnique({
@@ -83,20 +176,33 @@ export const fetchBillsJob = inngest.createFunction(
               const statusDate =
                 parsedStatusDate && !Number.isNaN(parsedStatusDate.getTime())
                   ? parsedStatusDate
-                  : validIntroducedDate ?? existing.statusDate;
+                  : validIntroducedFallback ?? existing.statusDate;
+
+              const updateData: Record<string, unknown> = {
+                currentStatus: latestStatus,
+                statusDate,
+                lastFetchedAt: new Date(),
+              };
+
+              if (validIntroducedPrimary && !existing.introducedDate) {
+                updateData.introducedDate = validIntroducedPrimary;
+              }
+
+              if (!existing.title && billData.title) {
+                updateData.title = billData.title;
+              }
+
+              if (!existing.officialTitle && billData.title) {
+                updateData.officialTitle = billData.title;
+              }
+
+              if (!existing.sourceUrl && billData.url) {
+                updateData.sourceUrl = billData.url;
+              }
 
               await db.bill.update({
                 where: { id: existing.id },
-                data: {
-                  title: billData.title || existing.title,
-                  officialTitle: billData.title || existing.officialTitle,
-                  currentStatus: latestStatus,
-                  statusDate,
-                  introducedDate:
-                    validIntroducedDate ?? existing.introducedDate,
-                  sourceUrl: billData.url || existing.sourceUrl,
-                  lastFetchedAt: new Date(),
-                },
+                data: updateData,
               });
 
               const action =
@@ -113,7 +219,7 @@ export const fetchBillsJob = inngest.createFunction(
               const statusDate =
                 parsedStatusDate && !Number.isNaN(parsedStatusDate.getTime())
                   ? parsedStatusDate
-                  : validIntroducedDate ?? new Date();
+                  : validIntroducedFallback ?? new Date();
 
               const newBill = await db.bill.create({
                 data: {
@@ -122,7 +228,10 @@ export const fetchBillsJob = inngest.createFunction(
                   congress: billData.congress,
                   title: billData.title,
                   officialTitle: billData.title,
-                  introducedDate: validIntroducedDate ?? new Date(),
+                  introducedDate:
+                    validIntroducedPrimary ??
+                    validIntroducedFallback ??
+                    new Date(),
                   currentStatus: latestStatus,
                   statusDate,
                   sourceUrl: billData.url,

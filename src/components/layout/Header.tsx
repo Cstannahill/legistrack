@@ -14,7 +14,7 @@ export function Header() {
 
                 <nav className="ml-8 flex gap-6">
                     <Link href="/bills" className="text-sm font-medium transition-colors hover:text-primary">
-                        Bills
+                        Legislation
                     </Link>
                     <Link href="/about" className="text-sm font-medium transition-colors hover:text-primary">
                         About

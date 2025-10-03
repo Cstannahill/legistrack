@@ -26,6 +26,8 @@ export default async function BillsPage({ searchParams }: PageProps) {
     const skip = (page - 1) * limit
     const legislationType = params.type || 'ALL' // 'ALL', 'BILLS', 'EXECUTIVE_ORDERS'
     const showIncomplete = params.showIncomplete === 'true' // Default: false (only show complete bills)
+    const searchQuery = params.search?.trim()
+    const hasSearchQuery = !!searchQuery
 
     // Determine what to fetch based on type filter
     // If status filter is applied, only fetch bills (EOs don't have status)
@@ -37,7 +39,9 @@ export default async function BillsPage({ searchParams }: PageProps) {
 
     // By default, only show bills with full text (better UX - complete content)
     // Users can toggle to see incomplete bills
-    if (!showIncomplete && shouldFetchBills) {
+    const requireCompleteBills = shouldFetchBills && !showIncomplete && !hasSearchQuery
+
+    if (requireCompleteBills) {
         billWhere.fullText = { not: null }
     }
 
@@ -51,11 +55,11 @@ export default async function BillsPage({ searchParams }: PageProps) {
         }
     }
 
-    if (params.search && shouldFetchBills) {
+    if (hasSearchQuery && shouldFetchBills && searchQuery) {
         // Check if query is wrapped in quotes for exact word matching
-        const quotedMatch = params.search.match(/^["'](.+)["']$/);
+        const quotedMatch = searchQuery.match(/^["'](.+)["']$/);
         const isExactWordMatch = !!quotedMatch;
-        const searchTerm = quotedMatch ? quotedMatch[1] : params.search;
+        const searchTerm = quotedMatch ? quotedMatch[1] : searchQuery;
 
         // Remove periods from search term for better matching (e.g., "HR. 5374" -> "HR 5374")
         const cleanedSearchTerm = searchTerm.replace(/\./g, '').trim();
@@ -140,10 +144,10 @@ export default async function BillsPage({ searchParams }: PageProps) {
         }
     }
 
-    if (params.search && shouldFetchEOs) {
-        const quotedMatch = params.search.match(/^["'](.+)["']$/);
+    if (hasSearchQuery && shouldFetchEOs && searchQuery) {
+        const quotedMatch = searchQuery.match(/^["'](.+)["']$/);
         const isExactWordMatch = !!quotedMatch;
-        const searchTerm = quotedMatch ? quotedMatch[1] : params.search;
+        const searchTerm = quotedMatch ? quotedMatch[1] : searchQuery;
 
         // Remove periods and clean search term (e.g., "EO. 1" -> "EO 1")
         const cleanedSearchTerm = searchTerm.replace(/\./g, '').trim();

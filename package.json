@@ -21,6 +21,7 @@
     "fetch-bills-paginated": "tsx scripts/fetch-bills-paginated.ts",
     "fetch-bills-recent": "tsx scripts/fetch-bills-recent.ts",
     "fetch-bill-texts": "tsx scripts/fetch-bill-texts.ts",
+    "fetch-bill-actions": "tsx scripts/fetch-bill-actions.ts",
     "fetch-executive-orders": "tsx scripts/fetch-executive-orders.ts",
     "update-eo-full-text": "tsx scripts/update-eo-full-text.ts",
     "test-federal-register": "tsx scripts/test-federal-register-api.ts",
@@ -42,7 +43,8 @@
     "gen-sum-or-eo": "tsx scripts/test-generate-summary-openrouter-eo.ts",
     "test-single-bill": "tsx scripts/test-single-bill.ts",
     "test-fetch-veteran-bills": "tsx scripts/test-fetch-veteran-bills.ts",
-    "test-companion-bills": "tsx scripts/test-companion-bills.ts"
+    "test-companion-bills": "tsx scripts/test-companion-bills.ts",
+    "test-search-regression": "tsx scripts/test-search-regression.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

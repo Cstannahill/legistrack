@@ -7,12 +7,131 @@ import { fetchLatestBills, fetchBillText } from "@/lib/api/congress";
 config();
 import { db } from "@/lib/db";
 import { CURRENT_CONGRESS } from "@/lib/constants";
+import { CompanionType } from "@prisma/client";
 
 // Configurable parameters
 const TOTAL_BILLS = parseInt(process.env.TOTAL_BILLS || "1000", 10);
 const FETCH_TEXT = process.env.FETCH_TEXT === "true"; // Default false (fetch during summarization)
 const FETCH_COMPANIONS = process.env.FETCH_COMPANIONS !== "false"; // Default true
+const START_DATE = process.env.START_DATE;
+const END_DATE = process.env.END_DATE;
+const LOOKBACK_DAYS = process.env.LOOKBACK_DAYS;
 const BATCH_SIZE = 250; // Congress.gov API maximum
+
+const formatCongressTimestamp = (value: Date) =>
+  value.toISOString().replace(/\.\d{3}Z$/, "Z");
+
+const parseCongressNumber = (value: string) => {
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    throw new Error(`Invalid congress number provided: '${value}'`);
+  }
+  return parsed;
+};
+
+const congressFromDate = (isoString: string) => {
+  const parsed = new Date(isoString);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(
+      `Unable to derive congress from invalid date '${isoString}'`
+    );
+  }
+  const year = parsed.getUTCFullYear();
+  if (year < 1789) {
+    throw new Error(
+      `Congress inference only supported for years 1789 and later (received ${year}).`
+    );
+  }
+  return Math.floor((year - 1789) / 2) + 1;
+};
+
+const formatCongressLabel = (value: number) => {
+  const lastTwo = value % 100;
+  const last = value % 10;
+  let suffix = "th";
+  if (lastTwo < 11 || lastTwo > 13) {
+    if (last === 1) suffix = "st";
+    else if (last === 2) suffix = "nd";
+    else if (last === 3) suffix = "rd";
+  }
+  return `${value}${suffix}`;
+};
+
+function resolveDateRange(): { fromDateTime?: string; toDateTime?: string } {
+  const normalizeDate = (value: string) => {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new Error(`Invalid date value provided: '${value}'`);
+    }
+    return formatCongressTimestamp(parsed);
+  };
+
+  if (LOOKBACK_DAYS) {
+    const days = parseInt(LOOKBACK_DAYS, 10);
+    if (Number.isNaN(days) || days <= 0) {
+      throw new Error(
+        `LOOKBACK_DAYS must be a positive integer. Received '${LOOKBACK_DAYS}'.`
+      );
+    }
+
+    const toRaw = END_DATE
+      ? normalizeDate(END_DATE)
+      : formatCongressTimestamp(new Date());
+    const toDate = new Date(toRaw);
+    const fromDate = new Date(toDate.getTime() - days * 24 * 60 * 60 * 1000);
+    return {
+      fromDateTime: formatCongressTimestamp(fromDate),
+      toDateTime: toRaw,
+    };
+  }
+
+  return {
+    fromDateTime: START_DATE ? normalizeDate(START_DATE) : undefined,
+    toDateTime: END_DATE ? normalizeDate(END_DATE) : undefined,
+  };
+}
+
+const { fromDateTime, toDateTime } = resolveDateRange();
+
+const CONGRESS_ENV =
+  process.env.FETCH_CONGRESS ??
+  process.env.CONGRESS ??
+  process.env.CONGRESS_NUMBER;
+
+let TARGET_CONGRESS = CURRENT_CONGRESS;
+let congressNote: string | undefined;
+
+const derivedFromCongress = fromDateTime
+  ? congressFromDate(fromDateTime)
+  : undefined;
+const derivedToCongress = toDateTime ? congressFromDate(toDateTime) : undefined;
+
+if (CONGRESS_ENV) {
+  TARGET_CONGRESS = parseCongressNumber(CONGRESS_ENV);
+  congressNote = `override via FETCH_CONGRESS (${TARGET_CONGRESS})`;
+} else if (
+  derivedFromCongress !== undefined &&
+  derivedToCongress !== undefined &&
+  derivedFromCongress !== derivedToCongress
+) {
+  TARGET_CONGRESS = derivedFromCongress;
+  congressNote = `range spans ${formatCongressLabel(
+    derivedFromCongress
+  )} – ${formatCongressLabel(derivedToCongress)}; using start date congress`;
+} else if (
+  derivedFromCongress !== undefined &&
+  derivedFromCongress !== CURRENT_CONGRESS
+) {
+  TARGET_CONGRESS = derivedFromCongress;
+  congressNote = "auto-detected from start date";
+} else if (
+  derivedFromCongress === undefined &&
+  derivedToCongress !== undefined &&
+  derivedToCongress !== CURRENT_CONGRESS
+) {
+  TARGET_CONGRESS = derivedToCongress;
+  congressNote = "auto-detected from end date";
+}
 
 /**
  * Fetch related bills and create companion relationships
@@ -68,7 +187,9 @@ async function processCompanionBills(
       }
 
       // Determine companion type
-      const companionTypeValue = relationshipType.includes("Identical")
+      const companionTypeValue: CompanionType = relationshipType.includes(
+        "Identical"
+      )
         ? "IDENTICAL"
         : "RELATED";
 
@@ -94,7 +215,7 @@ async function processCompanionBills(
           data: {
             sourceBillId: billId,
             companionBillId: companionBill.id,
-            relationshipType: companionTypeValue as any,
+            relationshipType: companionTypeValue,
           },
         });
 
@@ -114,22 +235,42 @@ async function fetchBatch(
   limit: number,
   fetchText: boolean
 ): Promise<{
+  fetched: number;
   created: number;
   updated: number;
   skipped: number;
+  unchanged: number;
   textFetched: number;
   textNotAvailable: number;
   companionsLinked: number;
 }> {
   const bills = await fetchLatestBills({
-    congress: CURRENT_CONGRESS,
+    congress: TARGET_CONGRESS,
     limit,
     offset,
+    fromDateTime,
+    toDateTime,
   });
 
+  const fetchedCount = bills.length;
+
+  if (fetchedCount === 0) {
+    return {
+      fetched: 0,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      unchanged: 0,
+      textFetched: 0,
+      textNotAvailable: 0,
+      companionsLinked: 0,
+    };
+  }
+
   let created = 0;
-  let updated = 0;
+  const updated = 0;
   let skipped = 0;
+  let unchanged = 0;
   let textFetched = 0;
   let textNotAvailable = 0;
   let companionsLinked = 0;
@@ -139,7 +280,7 @@ async function fetchBatch(
       // Check if bill exists
       const existing = await db.bill.findFirst({
         where: {
-          congress: CURRENT_CONGRESS,
+          congress: TARGET_CONGRESS,
           billType: billData.type.toLowerCase(), // Normalize to lowercase
           billNumber: parseInt(billData.number), // Convert string to number
         },
@@ -148,6 +289,12 @@ async function fetchBatch(
       const billIdentifier = `${billData.type.toUpperCase()} ${
         billData.number
       }`;
+
+      if (existing) {
+        console.log(`⏭️ Existing: ${billIdentifier} (unchanged)`);
+        unchanged++;
+        continue;
+      }
 
       // Try introducedDate first, fall back to updateDate, then latestAction date
       const introducedDateStr =
@@ -178,7 +325,7 @@ async function fetchBatch(
       if (fetchText) {
         try {
           const textData = await fetchBillText(
-            CURRENT_CONGRESS,
+            TARGET_CONGRESS,
             billData.type,
             parseInt(billData.number)
           );
@@ -202,72 +349,39 @@ async function fetchBatch(
         }
       }
 
-      let billId: string;
+      const newBill = await db.bill.create({
+        data: {
+          billType: billData.type.toLowerCase(), // Normalize to lowercase
+          billNumber: parseInt(billData.number), // Convert string to number
+          congress: TARGET_CONGRESS,
+          title: billData.title || `${billData.type} ${billData.number}`,
+          officialTitle: billData.title,
+          introducedDate,
+          currentStatus: "INTRODUCED",
+          statusDate: new Date(
+            billData.latestAction?.actionDate || billData.introducedDate
+          ),
+          sourceUrl: billData.url,
+          fullText,
+          fullTextUrl,
+          lastFetchedAt: new Date(),
+        },
+      });
+      const billId = newBill.id;
 
-      if (!existing) {
-        // Create new bill
-        const newBill = await db.bill.create({
-          data: {
-            billType: billData.type.toLowerCase(), // Normalize to lowercase
-            billNumber: parseInt(billData.number), // Convert string to number
-            congress: CURRENT_CONGRESS,
-            title: billData.title || `${billData.type} ${billData.number}`,
-            officialTitle: billData.title,
-            introducedDate,
-            currentStatus: "INTRODUCED",
-            statusDate: new Date(
-              billData.latestAction?.actionDate || billData.introducedDate
-            ),
-            sourceUrl: billData.url,
-            fullText,
-            fullTextUrl,
-            lastFetchedAt: new Date(),
-          },
-        });
-        billId = newBill.id;
-
-        const textIndicator = fullText
-          ? ` 📄 [${Math.round(fullText.length / 1000)}KB]`
-          : fullTextUrl
-          ? " 🔗"
-          : "";
-        const dateStr = introducedDate.toISOString().split("T")[0];
-        console.log(
-          `✓ Created: ${billIdentifier}${textIndicator} [${dateStr}] - ${billData.title?.substring(
-            0,
-            50
-          )}...`
-        );
-        created++;
-      } else {
-        // Update existing bill (and add full text if we don't have it yet)
-        await db.bill.update({
-          where: { id: existing.id },
-          data: {
-            statusDate: billData.latestAction?.actionDate
-              ? new Date(billData.latestAction.actionDate)
-              : existing.statusDate,
-            lastFetchedAt: new Date(),
-            // Only update text fields if we don't have them yet
-            ...(!existing.fullText &&
-              fullText && {
-                fullText,
-                fullTextUrl,
-              }),
-            ...(!existing.fullTextUrl &&
-              !fullText &&
-              fullTextUrl && {
-                fullTextUrl,
-              }),
-          },
-        });
-        billId = existing.id;
-
-        const textIndicator =
-          !existing.fullText && fullText ? " 📄 [+text]" : "";
-        console.log(`↻ Updated: ${billIdentifier}${textIndicator}`);
-        updated++;
-      }
+      const textIndicator = fullText
+        ? ` 📄 [${Math.round(fullText.length / 1000)}KB]`
+        : fullTextUrl
+        ? " 🔗"
+        : "";
+      const dateStr = introducedDate.toISOString().split("T")[0];
+      console.log(
+        `✓ Created: ${billIdentifier}${textIndicator} [${dateStr}] - ${billData.title?.substring(
+          0,
+          50
+        )}...`
+      );
+      created++;
 
       // Process companion bills if enabled
       if (FETCH_COMPANIONS) {
@@ -275,7 +389,7 @@ async function fetchBatch(
           billId,
           billData.type,
           billData.number,
-          CURRENT_CONGRESS
+          TARGET_CONGRESS
         );
         if (companionsFound > 0) {
           console.log(`   🔗 Linked ${companionsFound} companion bill(s)`);
@@ -294,9 +408,11 @@ async function fetchBatch(
   }
 
   return {
+    fetched: fetchedCount,
     created,
     updated,
     skipped,
+    unchanged,
     textFetched,
     textNotAvailable,
     companionsLinked,
@@ -305,11 +421,33 @@ async function fetchBatch(
 
 async function main() {
   console.log(`\n🏛️  Fetching bills from Congress.gov (Paginated)`);
-  console.log(`📊 Congress: ${CURRENT_CONGRESS}th`);
+  const congressLabel = formatCongressLabel(TARGET_CONGRESS);
+  console.log(
+    `📊 Congress: ${congressLabel}${congressNote ? ` (${congressNote})` : ""}`
+  );
   console.log(`📦 Total Bills to Fetch: ${TOTAL_BILLS}`);
   console.log(`📄 Fetch Full Text: ${FETCH_TEXT ? "Yes" : "No"}`);
   console.log(`🔗 Fetch Companions: ${FETCH_COMPANIONS ? "Yes" : "No"}`);
-  console.log(`⚡ Batch Size: ${BATCH_SIZE} (API limit)\n`);
+  console.log(`⚡ Batch Size: ${BATCH_SIZE} (API limit)`);
+  if (fromDateTime || toDateTime) {
+    console.log(
+      `🗓️  Date Range: ${fromDateTime ?? "(open)"} → ${toDateTime ?? "(open)"}`
+    );
+  }
+  if (
+    derivedFromCongress !== undefined &&
+    derivedToCongress !== undefined &&
+    derivedFromCongress !== derivedToCongress
+  ) {
+    console.log(
+      `⚠️  Date range spans multiple Congress sessions (${formatCongressLabel(
+        derivedFromCongress
+      )} → ${formatCongressLabel(
+        derivedToCongress
+      )}). Run once per session or set FETCH_CONGRESS to override.`
+    );
+  }
+  console.log();
 
   const numBatches = Math.ceil(TOTAL_BILLS / BATCH_SIZE);
   console.log(`🔢 Will process ${numBatches} batch(es)\n`);
@@ -317,9 +455,11 @@ async function main() {
   let totalCreated = 0;
   let totalUpdated = 0;
   let totalSkipped = 0;
+  let totalUnchanged = 0;
   let totalTextFetched = 0;
   let totalTextNotAvailable = 0;
   let totalCompanionsLinked = 0;
+  let totalFetched = 0;
 
   try {
     for (let batchNum = 0; batchNum < numBatches; batchNum++) {
@@ -339,14 +479,18 @@ async function main() {
       totalCreated += batchResults.created;
       totalUpdated += batchResults.updated;
       totalSkipped += batchResults.skipped;
+      totalUnchanged += batchResults.unchanged;
       totalTextFetched += batchResults.textFetched;
       totalTextNotAvailable += batchResults.textNotAvailable;
       totalCompanionsLinked += batchResults.companionsLinked;
+      totalFetched += batchResults.fetched;
 
       console.log(`\n📊 Batch ${batchNum + 1} Summary:`);
+      console.log(`   📨 API Results: ${batchResults.fetched}`);
       console.log(`   ✓ Created: ${batchResults.created}`);
       console.log(`   ↻ Updated: ${batchResults.updated}`);
       console.log(`   ✗ Skipped: ${batchResults.skipped}`);
+      console.log(`   ⏭️  Unchanged: ${batchResults.unchanged}`);
       if (FETCH_TEXT) {
         console.log(`   📄 Text Fetched: ${batchResults.textFetched}`);
         console.log(`   ⚠️  Text N/A: ${batchResults.textNotAvailable}`);
@@ -355,6 +499,24 @@ async function main() {
         console.log(
           `   🔗 Companions Linked: ${batchResults.companionsLinked}`
         );
+      }
+
+      let continuePaging = true;
+
+      if (batchResults.fetched === 0) {
+        console.log(
+          `   ⚠️  Congress.gov returned no results for this batch. Ending pagination early.`
+        );
+        continuePaging = false;
+      } else if (batchResults.fetched < batchLimit) {
+        console.log(
+          `   ℹ️  Received ${batchResults.fetched} result(s), fewer than the requested ${batchLimit}. Assuming end of available data.`
+        );
+        continuePaging = false;
+      }
+
+      if (!continuePaging) {
+        break;
       }
 
       // Add a delay between batches to be nice to the API
@@ -366,12 +528,19 @@ async function main() {
 
     console.log(`\n${"=".repeat(60)}`);
     console.log(`\n📈 FINAL SUMMARY (All Batches):`);
+    console.log(`   📨 Total API Results: ${totalFetched}`);
     console.log(`   ✓ Total Created: ${totalCreated}`);
     console.log(`   ↻ Total Updated: ${totalUpdated}`);
     console.log(`   ✗ Total Skipped: ${totalSkipped}`);
+    console.log(`   ⏭️  Total Unchanged: ${totalUnchanged}`);
     console.log(
       `   📊 Total Processed: ${totalCreated + totalUpdated + totalSkipped}`
     );
+    if (totalFetched === 0) {
+      console.log(
+        `   ⚠️  No results retrieved. Verify the date range and congress selection.`
+      );
+    }
     if (FETCH_TEXT) {
       console.log(`   📄 Total Text Fetched: ${totalTextFetched}`);
       console.log(`   ⚠️  Total Text N/A: ${totalTextNotAvailable}`);
