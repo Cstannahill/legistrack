@@ -33,6 +33,21 @@ export default function AboutPage() {
                         </p>
                     </section>
 
+                    <section className="mb-8 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-6 border-l-4 border-blue-500">
+                        <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
+                            Commitment to Free Access
+                        </h2>
+                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed text-lg">
+                            <strong>LegisTrack will always be free to use.</strong>
+                        </p>
+                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed mt-4">
+                            We believe that access to government legislation and clear explanations of it
+                            should never be behind a paywall. This project isn&apos;t about subscriptions, ads,
+                            or monetization — it&apos;s about making legislation more transparent and
+                            understandable for everyone.
+                        </p>
+                    </section>
+
                     <section className="mb-8">
                         <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
                             Current Focus
@@ -143,6 +158,12 @@ export default function AboutPage() {
                             government&apos;s actions. Check back regularly for updates and new features!
                         </p>
                     </section>
+
+                    <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700 text-center">
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                            Project created October 1, 2025
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>

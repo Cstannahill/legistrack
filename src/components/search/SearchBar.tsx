@@ -35,7 +35,7 @@ export function SearchBar() {
             <Input
                 type="search"
                 placeholder='Search by title, bill # (HR 4398), or "exact word"...'
-                className="pl-8"
+                className="pl-8 border border-slate-500"
                 value={query}
                 onChange={handleChange}
             />
