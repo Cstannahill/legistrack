@@ -1,5 +1,5 @@
 // Script to batch summarize executive orders using AI
-// Supports both Claude Sonnet 4.5 (anthropic) and GPT-5-nano (openai)
+// Supports Claude Sonnet 4.5 (anthropic), GPT-5-nano (openai), and OpenRouter models
 import { config } from "dotenv";
 import { db } from "@/lib/db";
 
@@ -7,17 +7,68 @@ import { db } from "@/lib/db";
 config();
 import { generateSummary } from "@/lib/ai/summarizer";
 import { generateSummaryOpenAI } from "@/lib/ai/summarizer-openai";
+import {
+  generateSummaryOpenRouter,
+  getAvailableModels,
+  isValidModel,
+  type OpenRouterModel,
+} from "@/lib/ai/summarizer-openrouter";
 
 // Configuration
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "10", 10);
-const AI_MODEL = process.env.AI_MODEL || "openai"; // "openai" or "anthropic"
+const SUPPORTED_MODELS = ["openai", "anthropic", "openrouter"] as const;
+type SupportedModel = (typeof SUPPORTED_MODELS)[number];
+const rawModel = (process.env.AI_MODEL || "openai").toLowerCase();
+const AI_MODEL: SupportedModel = SUPPORTED_MODELS.includes(
+  rawModel as SupportedModel
+)
+  ? (rawModel as SupportedModel)
+  : "openai";
+
+if (!SUPPORTED_MODELS.includes(rawModel as SupportedModel)) {
+  console.warn(
+    `⚠️  Unsupported AI_MODEL '${process.env.AI_MODEL}'. Falling back to openai.`
+  );
+}
 
 async function main() {
-  const modelName = AI_MODEL === "openai" ? "GPT-5-nano" : "Claude Sonnet 4.5";
+  const availableOpenRouterModels = getAvailableModels();
+  const resolveModelInfo = (key: OpenRouterModel) =>
+    availableOpenRouterModels.find((m) => m.key === key)!;
+
+  let openRouterModel: OpenRouterModel = "deepseek";
+  let openRouterModelInfo = resolveModelInfo(openRouterModel);
+
+  if (AI_MODEL === "openrouter") {
+    const requestedModel = process.env.OPENROUTER_MODEL?.toLowerCase();
+    if (requestedModel) {
+      if (isValidModel(requestedModel)) {
+        openRouterModel = requestedModel;
+        openRouterModelInfo = resolveModelInfo(openRouterModel);
+      } else {
+        console.warn(
+          `⚠️  Unsupported OPENROUTER_MODEL '${process.env.OPENROUTER_MODEL}'. Falling back to '${openRouterModel}'.`
+        );
+      }
+    }
+  }
+
+  const modelName =
+    AI_MODEL === "openai"
+      ? "GPT-5-nano"
+      : AI_MODEL === "anthropic"
+      ? "Claude Sonnet 4.5"
+      : `${openRouterModelInfo.name} (${openRouterModel}) via OpenRouter`;
 
   console.log(`\n🤖 Executive Order Batch Summarization`);
   console.log(`📦 Batch Size: ${BATCH_SIZE} executive orders`);
   console.log(`🧠 AI Model: ${modelName}\n`);
+  if (AI_MODEL === "openrouter") {
+    console.log(
+      `   🌐 Context Window: ${openRouterModelInfo.contextWindow.toLocaleString()} tokens`
+    );
+    console.log(`   💡 ${openRouterModelInfo.description}\n`);
+  }
 
   try {
     // Find executive orders without STANDARD summaries
@@ -83,6 +134,11 @@ async function main() {
 
         // Generate AI summary with selected model
         console.log(`   🤖 Generating STANDARD summary with ${modelName}...`);
+        if (AI_MODEL === "openrouter") {
+          console.log(
+            `   🌐 Using OpenRouter model '${openRouterModelInfo.name}' (${openRouterModel})`
+          );
+        }
         const startTime = Date.now();
 
         let summaryResult;
@@ -95,7 +151,7 @@ async function main() {
             status: `Signed on ${eo.signingDate.toLocaleDateString()}`,
             summaryType: "STANDARD",
           });
-        } else {
+        } else if (AI_MODEL === "anthropic") {
           summaryResult = await generateSummary({
             title: eo.title,
             fullText: eo.fullText,
@@ -103,6 +159,13 @@ async function main() {
             sponsor: `President ${eo.presidentName}`,
             status: `Signed on ${eo.signingDate.toLocaleDateString()}`,
             summaryType: "STANDARD",
+          });
+        } else {
+          summaryResult = await generateSummaryOpenRouter({
+            title: eo.title || identifier,
+            fullText: eo.fullText,
+            summaryType: "STANDARD",
+            model: openRouterModel,
           });
         }
 

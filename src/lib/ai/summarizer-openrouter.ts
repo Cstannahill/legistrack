@@ -155,7 +155,54 @@ function parseStructuredResponse(content: string): {
   impactAreas: string[];
   confidence: number;
 } {
-  const lines = content.split("\n");
+  const trimmedContent = content.trim();
+
+  // Preferred format: Markdown headings (matches OpenAI/Anthropic outputs)
+  const summaryMatch = trimmedContent.match(
+    /## Summary\n([\s\S]*?)(?=\n##|$)/i
+  );
+  const keyPointsMatch = trimmedContent.match(
+    /## Key Points\n([\s\S]*?)(?=\n##|$)/i
+  );
+  const impactAreasMatch = trimmedContent.match(
+    /## Impact Areas\n([\s\S]*?)(?=\n##|$)/i
+  );
+  const confidenceMatch = trimmedContent.match(
+    /## Confidence\n([\s\S]*?)(?=\n##|$)/i
+  );
+
+  if (summaryMatch || keyPointsMatch || impactAreasMatch) {
+    const summary =
+      summaryMatch?.[1]?.trim() || trimmedContent.split("\n\n")[0];
+    const keyPoints =
+      keyPointsMatch?.[1]
+        ?.split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => line.replace(/^[-*\d\.\)\s]+/, "").trim()) || [];
+
+    const impactAreas =
+      impactAreasMatch?.[1]
+        ?.split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => line.replace(/^[-*\d\.\)\s]+/, "").trim()) || [];
+
+    const confidenceValue = confidenceMatch?.[1]
+      ?.trim()
+      ?.replace(/[^0-9\.]/g, "");
+    const confidence = confidenceValue ? parseFloat(confidenceValue) : 0.8;
+
+    return {
+      content: summary,
+      keyPoints,
+      impactAreas: [...new Set(impactAreas)],
+      confidence: isNaN(confidence) ? 0.8 : confidence,
+    };
+  }
+
+  // Legacy format fallback: Label-based sections (SUMMARY:, KEY_POINTS:, etc.)
+  const lines = trimmedContent.split("\n");
   let summary = "";
   const keyPoints: string[] = [];
   const impactAreas: string[] = [];
@@ -164,30 +211,30 @@ function parseStructuredResponse(content: string): {
   let currentSection: "summary" | "keypoints" | "impact" | null = null;
 
   for (const line of lines) {
-    const trimmed = line.trim();
+    const lineTrimmed = line.trim();
 
-    if (trimmed.startsWith("SUMMARY:")) {
+    if (lineTrimmed.startsWith("SUMMARY:")) {
       currentSection = "summary";
-      summary = trimmed.replace("SUMMARY:", "").trim();
+      summary = lineTrimmed.replace("SUMMARY:", "").trim();
       continue;
     }
 
-    if (trimmed.startsWith("KEY_POINTS:")) {
+    if (lineTrimmed.startsWith("KEY_POINTS:")) {
       currentSection = "keypoints";
       continue;
     }
 
-    if (trimmed.startsWith("IMPACT_AREAS:")) {
+    if (lineTrimmed.startsWith("IMPACT_AREAS:")) {
       currentSection = "impact";
-      const areasText = trimmed.replace("IMPACT_AREAS:", "").trim();
+      const areasText = lineTrimmed.replace("IMPACT_AREAS:", "").trim();
       if (areasText) {
         impactAreas.push(...areasText.split(",").map((a) => a.trim()));
       }
       continue;
     }
 
-    if (trimmed.startsWith("CONFIDENCE:")) {
-      const confText = trimmed.replace("CONFIDENCE:", "").trim();
+    if (lineTrimmed.startsWith("CONFIDENCE:")) {
+      const confText = lineTrimmed.replace("CONFIDENCE:", "").trim();
       const parsed = parseFloat(confText);
       if (!isNaN(parsed)) {
         confidence = parsed;
@@ -196,25 +243,29 @@ function parseStructuredResponse(content: string): {
       continue;
     }
 
-    // Handle content based on current section
-    if (currentSection === "summary" && trimmed) {
-      summary += " " + trimmed;
-    } else if (currentSection === "keypoints" && trimmed.startsWith("-")) {
-      keyPoints.push(trimmed.substring(1).trim());
-    } else if (currentSection === "impact" && trimmed) {
-      impactAreas.push(...trimmed.split(",").map((a) => a.trim()));
+    if (currentSection === "summary" && lineTrimmed) {
+      summary += (summary ? " " : "") + lineTrimmed;
+    } else if (currentSection === "keypoints" && lineTrimmed) {
+      const point = lineTrimmed.replace(/^[-*\d\.\)\s]+/, "").trim();
+      if (point) keyPoints.push(point);
+    } else if (currentSection === "impact" && lineTrimmed) {
+      impactAreas.push(
+        ...lineTrimmed
+          .split(",")
+          .map((area) => area.trim())
+          .filter(Boolean)
+      );
     }
   }
 
-  // Fallback: if parsing failed, use entire content as summary
   if (!summary) {
-    summary = content;
+    summary = trimmedContent;
   }
 
   return {
     content: summary.trim(),
     keyPoints,
-    impactAreas: [...new Set(impactAreas)], // Remove duplicates
+    impactAreas: [...new Set(impactAreas)],
     confidence,
   };
 }

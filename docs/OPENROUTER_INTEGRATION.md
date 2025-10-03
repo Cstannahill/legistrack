@@ -47,6 +47,23 @@ npm run gen-sum-or <model> <billType> <billNumber>
 - `<billType>`: Bill type (HR, S, HRES, SRES, HJRES, SJRES, etc.)
 - `<billNumber>`: Bill number (e.g., 4398)
 
+> **Note:** OpenRouter scripts now generate only the `STANDARD` summary to align with our OpenAI and Anthropic flows and conserve free-tier API usage.
+
+### Batch Summarization
+
+Process outstanding bills or executive orders in batches with OpenRouter:
+
+```bash
+npm run summarize-bills-openrouter
+npm run summarize-eos-openrouter
+```
+
+Set a different OpenRouter model by exporting `OPENROUTER_MODEL` (defaults to `deepseek`). For example:
+
+```bash
+OPENROUTER_MODEL=qwen npm run summarize-bills-openrouter
+```
+
 ## Model Details
 
 ### DeepSeek V3.1 (deepseek)
@@ -111,6 +128,7 @@ Add to your `.env` file:
 ```env
 OPENROUTER_API_KEY=sk-or-v1-your-api-key-here
 SITE_URL=https://your-site.com  # Optional, for OpenRouter attribution
+OPENROUTER_MODEL=deepseek       # Optional, overrides the default model
 ```
 
 ### API Key Setup
@@ -353,12 +371,20 @@ Output:
    Title: Example Bill Title
    ...
 
-⚡ Generating Brief summary...
-✅ Brief summary generated (3254ms)
-   Model: DeepSeek V3.1 (deepseek)
-   Confidence: 85.0%
-   Length: 256 chars
-   ...
+📋 Generating Standard summary...
+✅ Standard summary generated (3254ms)
+  Model: DeepSeek V3.1 (deepseek)
+  Confidence: 85.0%
+  Length: 512 chars
+  ...
+
+================================================================================
+✅ GENERATION COMPLETE
+================================================================================
+📄 Bill: HR 5371
+🧠 Model: DeepSeek V3.1
+📊 Summaries Generated: 1
+⏱️  Total Time: 3254ms (3.25s)
 ```
 
 ### Example 2: Long Bill

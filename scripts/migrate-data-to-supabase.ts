@@ -2,16 +2,66 @@
 import { PrismaClient } from "@prisma/client";
 import { config } from "dotenv";
 
+type ConnectionTarget =
+  | "local"
+  | "supabase (pooled)"
+  | "supabase (non-pooling)";
+
 config();
 
-// Local database connection
+const LOCAL_DB_URL = process.env.DATABASE_URL;
+const SUPABASE_PRISMA_URL = process.env.SUPABASE_POSTGRES_PRISMA_URL;
+const SUPABASE_NON_POOLING_URL = process.env.SUPABASE_POSTGRES_URL_NON_POOLING;
+const SUPABASE_DB_URL = SUPABASE_NON_POOLING_URL ?? SUPABASE_PRISMA_URL;
+const SUPABASE_TARGET: ConnectionTarget = SUPABASE_NON_POOLING_URL
+  ? "supabase (non-pooling)"
+  : "supabase (pooled)";
+
+if (!LOCAL_DB_URL) {
+  throw new Error(
+    "DATABASE_URL is not set. Please ensure your local database connection string is defined before running the migration."
+  );
+}
+
+if (!SUPABASE_DB_URL) {
+  throw new Error(
+    "Supabase connection string not found. Set SUPABASE_POSTGRES_PRISMA_URL or SUPABASE_POSTGRES_URL_NON_POOLING in your environment."
+  );
+}
+
+const describeConnection = (urlString: string, target: ConnectionTarget) => {
+  try {
+    const url = new URL(urlString);
+    return `${target} → ${url.hostname}:${url.port || "5432"}`;
+  } catch (error) {
+    console.warn(`Unable to parse ${target} connection string`, error);
+    return `${target} → (unknown host)`;
+  }
+};
+
+console.log("\n🔗 Using database connections:");
+console.log(`   • ${describeConnection(LOCAL_DB_URL, "local")}`);
+console.log(`   • ${describeConnection(SUPABASE_DB_URL, SUPABASE_TARGET)}\n`);
+
+if (SUPABASE_NON_POOLING_URL && SUPABASE_PRISMA_URL) {
+  console.log(
+    "   ℹ️  Both pooled and non-pooling Supabase URLs detected; defaulting to non-pooling for long-running migrations."
+  );
+} else if (!SUPABASE_NON_POOLING_URL) {
+  console.log(
+    "   ⚠️  Non-pooling Supabase URL not set; using pooled connection which may stall on large writes."
+  );
+}
+
+// Local database connection (uses local DATABASE_URL)
 const localDb = new PrismaClient({
-  datasourceUrl:
-    "postgresql://ctan-dev:constResolveLogin1!@localhost:5432/legislation_tracker",
+  datasourceUrl: LOCAL_DB_URL,
 });
 
-// Supabase database connection (uses current env)
-const supabaseDb = new PrismaClient();
+// Supabase database connection (explicit env-based URL)
+const supabaseDb = new PrismaClient({
+  datasourceUrl: SUPABASE_DB_URL,
+});
 
 async function migrateData() {
   console.log("\n🚀 Starting data migration from local dev to Supabase...\n");
