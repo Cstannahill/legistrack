@@ -142,9 +142,48 @@ export default async function BillsPage({ searchParams }: PageProps) {
 
     if (params.search && shouldFetchEOs) {
         const quotedMatch = params.search.match(/^["'](.+)["']$/);
+        const isExactWordMatch = !!quotedMatch;
         const searchTerm = quotedMatch ? quotedMatch[1] : params.search;
 
-        eoWhere.title = { contains: searchTerm, mode: 'insensitive' }
+        // Remove periods and clean search term (e.g., "EO. 1" -> "EO 1")
+        const cleanedSearchTerm = searchTerm.replace(/\./g, '').trim();
+
+        // Parse potential EO number from query (e.g., "EO 1", "EO. 14111", "14111")
+        const eoNumberMatch = cleanedSearchTerm.match(/^(?:EO)?\s*(\d+)$/i);
+
+        if (eoNumberMatch) {
+            // User is searching for an EO number
+            const orderNumber = parseInt(eoNumberMatch[1], 10);
+
+            // Search by order number only (exact match or partial match)
+            const orderNumberStr = eoNumberMatch[1];
+            const numDigits = orderNumberStr.length;
+
+            if (numDigits < 5) {
+                // For shorter numbers, support partial matching
+                // "1" should match 1, 10, 11, 12, ... 19, 100, etc.
+                const rangeStart = orderNumber * Math.pow(10, Math.max(0, 5 - numDigits));
+                const rangeEnd = rangeStart + Math.pow(10, Math.max(0, 5 - numDigits));
+
+                eoWhere.OR = [
+                    { orderNumber: orderNumber }, // Exact match
+                    { orderNumber: { gte: rangeStart, lt: rangeEnd } }, // Partial match
+                ];
+            } else {
+                // For full numbers, exact match only
+                eoWhere.orderNumber = orderNumber;
+            }
+        } else if (isExactWordMatch) {
+            // Exact word matching in title
+            eoWhere.OR = [
+                { title: { contains: ` ${searchTerm} `, mode: 'insensitive' } },
+                { title: { startsWith: `${searchTerm} `, mode: 'insensitive' } },
+                { title: { endsWith: ` ${searchTerm}`, mode: 'insensitive' } },
+            ];
+        } else {
+            // Regular title search
+            eoWhere.title = { contains: searchTerm, mode: 'insensitive' };
+        }
     }
 
     // Fetch data based on type
@@ -265,7 +304,7 @@ export default async function BillsPage({ searchParams }: PageProps) {
             <div className="flex flex-col gap-8 lg:flex-row">
                 {/* Sidebar Filters - Desktop Only */}
                 <aside className="hidden w-full lg:block lg:w-64 lg:shrink-0">
-                    <div className="sticky top-4">
+                    <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto sidebar-scroll">
                         <FilterPanel categories={categories} />
                     </div>
                 </aside>

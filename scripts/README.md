@@ -15,6 +15,18 @@ BATCH_SIZE=20 npm run summarize-bills-openai
 npm run summarize-bills-anthropic
 BATCH_SIZE=10 npm run summarize-bills-anthropic
 
+# With OpenRouter Models (FREE!)
+npm run gen-sum-or deepseek HR 4398   # DeepSeek V3.1 (best quality)
+npm run gen-sum-or qwen S 2309        # Qwen3 235B (great alternative)
+npm run gen-sum-or gemini HRES 723    # Gemini 2.0 Flash (1M context)
+npm run gen-sum-or mistral HR 5371    # Mistral Small 3.2 (fastest)
+
+# Executive Orders with OpenRouter (FREE!)
+npm run gen-sum-or-eo deepseek 14067  # DeepSeek V3.1 (best quality)
+npm run gen-sum-or-eo qwen 14111      # Qwen3 235B (great alternative)
+npm run gen-sum-or-eo gemini 14175    # Gemini 2.0 Flash (1M context)
+npm run gen-sum-or-eo mistral 14177   # Mistral Small 3.2 (fastest)
+
 # With explicit environment variables
 AI_MODEL=openai BATCH_SIZE=15 npm run summarize-bills
 AI_MODEL=anthropic BATCH_SIZE=5 npm run summarize-bills
@@ -40,16 +52,27 @@ AI_MODEL=anthropic BATCH_SIZE=5 npm run summarize-executive-orders
 
 - ✅ **Only generates STANDARD summaries** (saves 2/3 of API costs)
 - ✅ **Skips already-summarized items** (no wasted API calls)
-- ✅ **Full model control** (choose OpenAI or Anthropic per batch)
+- ✅ **Full model control** (choose OpenAI, Anthropic, or OpenRouter)
 - ✅ **Batch size control** (manage costs precisely)
+- ✅ **FREE OpenRouter models** (DeepSeek, Qwen, Gemini, Mistral)
 
 **Cost Comparison (per item):**
 
+- OpenRouter (DeepSeek, Qwen, etc.): **FREE** 🎉
 - GPT-5-nano: ~$0.0003-0.001 per summary
 - Claude Sonnet 4.5: ~$0.008-0.024 per summary
 - **Savings: 3x cost reduction** (1 summary vs 3 per item)
 
----
+**OpenRouter Models:**
+
+| Model             | Command    | Best For                           |
+| ----------------- | ---------- | ---------------------------------- |
+| DeepSeek V3.1     | `deepseek` | Best overall quality (671B params) |
+| Qwen3 235B        | `qwen`     | Strong reasoning (235B params)     |
+| Gemini 2.0 Flash  | `gemini`   | Long bills (1M context)            |
+| Mistral Small 3.2 | `mistral`  | Speed (24B params)                 |
+
+## See [OPENROUTER_INTEGRATION.md](../docs/OPENROUTER_INTEGRATION.md) for full details.
 
 ## ⚠️ Important: Congress.gov API Limitation
 

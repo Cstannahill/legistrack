@@ -35,6 +35,8 @@
     "check-tag-status": "tsx scripts/check-tag-status.ts",
     "migrate-bill-categories": "tsx scripts/migrate-bill-categories.ts",
     "gen-sum": "tsx scripts/test-generate-summary.ts",
+    "gen-sum-or": "tsx scripts/test-generate-summary-openrouter.ts",
+    "gen-sum-or-eo": "tsx scripts/test-generate-summary-openrouter-eo.ts",
     "test-single-bill": "tsx scripts/test-single-bill.ts",
     "test-fetch-veteran-bills": "tsx scripts/test-fetch-veteran-bills.ts",
     "test-companion-bills": "tsx scripts/test-companion-bills.ts"
@@ -53,6 +55,7 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@vercel/analytics": "^1.5.0",
     "@vercel/kv": "^3.0.0",
+    "@vercel/speed-insights": "^1.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
