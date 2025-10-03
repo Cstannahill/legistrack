@@ -38,13 +38,35 @@ export const fetchBillsJob = inngest.createFunction(
 
         for (const billData of bills) {
           try {
-            // Check if bill exists
+            const normalizedBillType = billData.type.toLowerCase();
+            const billNumber = parseInt(String(billData.number), 10);
+
+            if (Number.isNaN(billNumber)) {
+              console.warn(
+                `Skipping bill with invalid number: ${billData.number}`
+              );
+              processed.push({ action: "skipped", reason: "invalid-number" });
+              continue;
+            }
+
+            const introducedDateRaw =
+              billData.introducedDate ||
+              billData.updateDate ||
+              billData.latestAction?.actionDate;
+            const introducedDate = introducedDateRaw
+              ? new Date(introducedDateRaw)
+              : undefined;
+            const validIntroducedDate =
+              introducedDate && !Number.isNaN(introducedDate.getTime())
+                ? introducedDate
+                : undefined;
+
             const existing = await db.bill.findUnique({
               where: {
                 congress_billType_billNumber: {
                   congress: billData.congress,
-                  billType: billData.type.toLowerCase(),
-                  billNumber: billData.number,
+                  billType: normalizedBillType,
+                  billNumber,
                 },
               },
             });
@@ -54,35 +76,57 @@ export const fetchBillsJob = inngest.createFunction(
             );
 
             if (existing) {
-              // Update if status changed
-              if (existing.currentStatus !== latestStatus) {
-                await db.bill.update({
-                  where: { id: existing.id },
-                  data: {
-                    currentStatus: latestStatus,
-                    statusDate: new Date(
-                      billData.latestAction?.actionDate ||
-                        billData.introducedDate
-                    ),
-                    lastFetchedAt: new Date(),
-                  },
-                });
-                processed.push({ id: existing.id, action: "updated" });
-              }
+              const statusDateRaw = billData.latestAction?.actionDate;
+              const parsedStatusDate = statusDateRaw
+                ? new Date(statusDateRaw)
+                : undefined;
+              const statusDate =
+                parsedStatusDate && !Number.isNaN(parsedStatusDate.getTime())
+                  ? parsedStatusDate
+                  : validIntroducedDate ?? existing.statusDate;
+
+              await db.bill.update({
+                where: { id: existing.id },
+                data: {
+                  title: billData.title || existing.title,
+                  officialTitle: billData.title || existing.officialTitle,
+                  currentStatus: latestStatus,
+                  statusDate,
+                  introducedDate:
+                    validIntroducedDate ?? existing.introducedDate,
+                  sourceUrl: billData.url || existing.sourceUrl,
+                  lastFetchedAt: new Date(),
+                },
+              });
+
+              const action =
+                existing.currentStatus !== latestStatus
+                  ? "updated"
+                  : "refreshed";
+
+              processed.push({ id: existing.id, action });
             } else {
-              // Create new bill
+              const statusDateRaw = billData.latestAction?.actionDate;
+              const parsedStatusDate = statusDateRaw
+                ? new Date(statusDateRaw)
+                : undefined;
+              const statusDate =
+                parsedStatusDate && !Number.isNaN(parsedStatusDate.getTime())
+                  ? parsedStatusDate
+                  : validIntroducedDate ?? new Date();
+
               const newBill = await db.bill.create({
                 data: {
-                  billType: billData.type.toLowerCase(),
-                  billNumber: billData.number,
+                  billType: normalizedBillType,
+                  billNumber,
                   congress: billData.congress,
                   title: billData.title,
-                  introducedDate: new Date(billData.introducedDate),
+                  officialTitle: billData.title,
+                  introducedDate: validIntroducedDate ?? new Date(),
                   currentStatus: latestStatus,
-                  statusDate: new Date(
-                    billData.latestAction?.actionDate || billData.introducedDate
-                  ),
+                  statusDate,
                   sourceUrl: billData.url,
+                  lastFetchedAt: new Date(),
                 },
               });
               processed.push({ id: newBill.id, action: "created" });
@@ -126,7 +170,9 @@ export const fetchBillsJob = inngest.createFunction(
             itemsFailed: results.filter((r) => r.action === "failed").length,
             metadata: {
               created: results.filter((r) => r.action === "created").length,
-              updated: results.filter((r) => r.action === "updated").length,
+              updated: results.filter(
+                (r) => r.action === "updated" || r.action === "refreshed"
+              ).length,
               duration: Date.now() - jobStartTime.getTime(),
             },
           },
@@ -137,7 +183,9 @@ export const fetchBillsJob = inngest.createFunction(
         success: true,
         billsProcessed: results.length,
         created: results.filter((r) => r.action === "created").length,
-        updated: results.filter((r) => r.action === "updated").length,
+        updated: results.filter(
+          (r) => r.action === "updated" || r.action === "refreshed"
+        ).length,
       };
     } catch (error) {
       // Update job run with failure

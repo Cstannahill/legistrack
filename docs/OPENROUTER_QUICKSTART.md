@@ -3,11 +3,13 @@
 ## 🚀 Quick Start
 
 ### Bills
+
 ```bash
 npm run gen-sum-or <model> <billType> <billNumber>
 ```
 
 ### Executive Orders
+
 ```bash
 npm run gen-sum-or-eo <model> <orderNumber>
 ```
@@ -24,6 +26,7 @@ npm run gen-sum-or-eo <model> <orderNumber>
 ## 💡 Examples
 
 ### Bills
+
 ```bash
 # Recommended: DeepSeek V3.1
 npm run gen-sum-or deepseek HR 4398
@@ -40,6 +43,7 @@ npm run gen-sum-or qwen S 2309
 ```
 
 ### Executive Orders
+
 ```bash
 # Recommended: DeepSeek V3.1
 npm run gen-sum-or-eo deepseek 14067

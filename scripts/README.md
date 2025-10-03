@@ -119,6 +119,41 @@ LIMIT=250 OFFSET=750 npm run fetch-bills  # Bills 750-999
 
 ## Available Scripts
 
+### 🤖 Scheduled Jobs Keep Pace
+
+- Inngest background functions now call the same shared workflow (`src/workflows/summarize-bill-standard.ts`) as the CLI. Cron-triggered runs only generate **STANDARD** summaries and respect `AI_MODEL`/`INGEST_AI_MODEL` overrides—including OpenRouter selections.
+- The `fetch-bills` job mirrors the CLI normalization steps, coercing bill numbers to integers, syncing official titles, updating `lastFetchedAt`, and preserving status history even when nothing else changes.
+- Categorization and batch fan-out still execute only after a successful STANDARD summary, so downstream jobs never run on incomplete records.
+
+### `migrate-data-to-supabase.ts` - Sync Local Database to Supabase
+
+Safely copies data from your local Prisma database to your Supabase Postgres instance without touching your development connection string.
+
+```bash
+# Uses DATABASE_URL for local reads and SUPABASE_POSTGRES_PRISMA_URL for Supabase writes
+tsx scripts/migrate-data-to-supabase.ts
+```
+
+**Environment variables required:**
+
+- `DATABASE_URL` → Local development database (read source)
+- `SUPABASE_POSTGRES_PRISMA_URL` → Supabase pooled connection string _(preferred)_
+- `SUPABASE_POSTGRES_URL_NON_POOLING` → Fallback if pooled URL is unavailable
+
+**What the script does:**
+
+1. Connects to the local database using `DATABASE_URL`
+2. Connects separately to Supabase using the pooled Prisma URL (falls back to non-pooling)
+3. Logs both host targets before migrating for sanity checks
+4. Transfers bills, summaries, categories, and related join tables
+5. Skips items that already exist remotely to avoid duplication
+
+**Tips:**
+
+- Run `npm run db:push` locally first to ensure schema parity
+- The script emits counts per model; review the summary before re-running
+- If you need to repeat the migration, Supabase records are upserted so re-runs are safe
+
 ### 0. `test-generate-summary.ts` - **Single Bill Summary Generation (Testing & Comparison)** ⭐ NEW!
 
 **Perfect for testing and comparing AI models on specific bills!**

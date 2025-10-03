@@ -356,67 +356,58 @@ async function main() {
       console.log(`   ✅ Created bill in database`);
     }
 
-    // Step 5: Generate summaries with OpenRouter
-    console.log(`\n5️⃣  Generating summaries with ${modelInfo.name}...`);
+    // Step 5: Generate STANDARD summary with ${modelInfo.name}
+    console.log(`\n5️⃣  Generating STANDARD summary with ${modelInfo.name}...`);
     console.log(`${"=".repeat(80)}\n`);
 
-    const summaryTypes = [
-      { type: "BRIEF" as const, label: "Brief", emoji: "⚡" },
-      { type: "STANDARD" as const, label: "Standard", emoji: "📋" },
-      { type: "ELI5" as const, label: "ELI5", emoji: "👶" },
-    ];
+    console.log(`📋 Generating Standard summary...`);
+    const startTime = Date.now();
 
-    let totalTime = 0;
+    const summary = await generateSummaryOpenRouter({
+      title: bill.title || billIdentifier,
+      fullText: textData.text,
+      summaryType: "STANDARD",
+      model: model as OpenRouterModel,
+    });
 
-    for (const { type, label, emoji } of summaryTypes) {
-      console.log(`${emoji} Generating ${label} summary...`);
-      const startTime = Date.now();
+    const elapsed = Date.now() - startTime;
 
-      const summary = await generateSummaryOpenRouter({
-        title: bill.title || billIdentifier,
-        fullText: textData.text,
-        summaryType: type,
-        model: model as OpenRouterModel,
+    // Save summary to database
+    await db.summary.create({
+      data: {
+        summaryType: "STANDARD",
+        content: summary.content,
+        keyPoints: summary.keyPoints,
+        impactAreas: summary.impactAreas,
+        confidence: summary.confidence,
+        aiModel: summary.model,
+        billId: bill.id,
+      },
+    });
+
+    console.log(`✅ Standard summary generated (${elapsed}ms)`);
+    console.log(`   Model: ${summary.model}`);
+    console.log(`   Confidence: ${(summary.confidence * 100).toFixed(1)}%`);
+    console.log(`   Length: ${summary.content.length} chars`);
+    console.log(`\n   Content:`);
+    console.log(`   ${"-".repeat(76)}`);
+    console.log(`   ${summary.content}`);
+    console.log(`   ${"-".repeat(76)}`);
+
+    if (summary.keyPoints.length > 0) {
+      console.log(`\n   Key Points:`);
+      summary.keyPoints.forEach((point, i) => {
+        console.log(`   ${i + 1}. ${point}`);
       });
-
-      const elapsed = Date.now() - startTime;
-      totalTime += elapsed;
-
-      // Save summary to database
-      await db.summary.create({
-        data: {
-          summaryType: type,
-          content: summary.content,
-          keyPoints: summary.keyPoints,
-          impactAreas: summary.impactAreas,
-          confidence: summary.confidence,
-          aiModel: summary.model,
-          billId: bill.id,
-        },
-      });
-
-      console.log(`✅ ${label} summary generated (${elapsed}ms)`);
-      console.log(`   Model: ${summary.model}`);
-      console.log(`   Confidence: ${(summary.confidence * 100).toFixed(1)}%`);
-      console.log(`   Length: ${summary.content.length} chars`);
-      console.log(`\n   Content:`);
-      console.log(`   ${"-".repeat(76)}`);
-      console.log(`   ${summary.content}`);
-      console.log(`   ${"-".repeat(76)}`);
-
-      if (summary.keyPoints.length > 0) {
-        console.log(`\n   Key Points:`);
-        summary.keyPoints.forEach((point, i) => {
-          console.log(`   ${i + 1}. ${point}`);
-        });
-      }
-
-      if (summary.impactAreas.length > 0) {
-        console.log(`\n   Impact Areas: ${summary.impactAreas.join(", ")}`);
-      }
-
-      console.log(`\n`);
     }
+
+    if (summary.impactAreas.length > 0) {
+      console.log(`\n   Impact Areas: ${summary.impactAreas.join(", ")}`);
+    }
+
+    console.log(`\n`);
+
+    const totalTime = elapsed;
 
     // Step 6: Summary
     console.log(`${"=".repeat(80)}`);
@@ -424,7 +415,7 @@ async function main() {
     console.log(`${"=".repeat(80)}`);
     console.log(`📄 Bill: ${billIdentifier}`);
     console.log(`🧠 Model: ${modelInfo.name}`);
-    console.log(`📊 Summaries Generated: ${summaryTypes.length}`);
+    console.log(`📊 Summaries Generated: 1`);
     console.log(
       `⏱️  Total Time: ${totalTime}ms (${(totalTime / 1000).toFixed(2)}s)`
     );

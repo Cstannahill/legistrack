@@ -9,7 +9,7 @@ export function Header() {
             <div className="container flex h-16 items-center">
                 <Link href="/" className="flex items-center gap-2 font-semibold">
                     <Scale className="h-6 w-6" />
-                    <span className="text-lg">LegisTracker</span>
+                    <span className="text-lg">LegisTrack</span>
                 </Link>
 
                 <nav className="ml-8 flex gap-6">

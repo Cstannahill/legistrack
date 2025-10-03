@@ -50,9 +50,7 @@ Examples:
 
 Available Models:
 ${availableModels
-  .map(
-    (m) => `  ${m.key.padEnd(10)} - ${m.name} (${m.description})`
-  )
+  .map((m) => `  ${m.key.padEnd(10)} - ${m.name} (${m.description})`)
   .join("\n")}
 
 Order Number: Any valid Executive Order number (e.g., 14067, 14111)
@@ -63,7 +61,9 @@ Order Number: Any valid Executive Order number (e.g., 14067, 14111)
 if (!isValidModel(model)) {
   const availableModels = getAvailableModels();
   console.error(
-    `❌ Invalid model: ${model}. Available models: ${availableModels.map((m) => m.key).join(", ")}`
+    `❌ Invalid model: ${model}. Available models: ${availableModels
+      .map((m) => m.key)
+      .join(", ")}`
   );
   process.exit(1);
 }
@@ -102,12 +102,16 @@ async function main() {
       console.log(`   Title: ${eo.title}`);
       console.log(`   Signed: ${eo.signingDate.toISOString().split("T")[0]}`);
       console.log(
-        `   Publication: ${eo.publicationDate?.toISOString().split("T")[0] || "N/A"}`
+        `   Publication: ${
+          eo.publicationDate?.toISOString().split("T")[0] || "N/A"
+        }`
       );
       console.log(`   Has Full Text: ${eo.fullText ? "Yes" : "No"}`);
       console.log(`   Existing Summaries: ${eo.summaries.length}`);
     } else {
-      console.error(`   ❌ Executive Order ${orderNumber} not found in database`);
+      console.error(
+        `   ❌ Executive Order ${orderNumber} not found in database`
+      );
       console.log(`   💡 Run 'npm run fetch-executive-orders' first`);
       process.exit(1);
     }
@@ -125,67 +129,58 @@ async function main() {
     console.log(`   Length: ${eo.fullText.length.toLocaleString()} characters`);
     console.log(`   URL: ${eo.sourceUrl}`);
 
-    // Step 3: Generate summaries with OpenRouter
-    console.log(`\n3️⃣  Generating summaries with ${modelInfo.name}...`);
+    // Step 3: Generate STANDARD summary with OpenRouter
+    console.log(`\n3️⃣  Generating STANDARD summary with ${modelInfo.name}...`);
     console.log(`${"=".repeat(80)}\n`);
 
-    const summaryTypes = [
-      { type: "BRIEF" as const, label: "Brief", emoji: "⚡" },
-      { type: "STANDARD" as const, label: "Standard", emoji: "📋" },
-      { type: "ELI5" as const, label: "ELI5", emoji: "👶" },
-    ];
+    console.log(`📋 Generating Standard summary...`);
+    const startTime = Date.now();
 
-    let totalTime = 0;
+    const summary = await generateSummaryOpenRouter({
+      title: eo.title || orderIdentifier,
+      fullText: eo.fullText,
+      summaryType: "STANDARD",
+      model: model as OpenRouterModel,
+    });
 
-    for (const { type, label, emoji } of summaryTypes) {
-      console.log(`${emoji} Generating ${label} summary...`);
-      const startTime = Date.now();
+    const elapsed = Date.now() - startTime;
 
-      const summary = await generateSummaryOpenRouter({
-        title: eo.title || orderIdentifier,
-        fullText: eo.fullText,
-        summaryType: type,
-        model: model as OpenRouterModel,
+    // Save summary to database
+    await db.summary.create({
+      data: {
+        summaryType: "STANDARD",
+        content: summary.content,
+        keyPoints: summary.keyPoints,
+        impactAreas: summary.impactAreas,
+        confidence: summary.confidence,
+        aiModel: summary.model,
+        executiveOrderId: eo.id,
+      },
+    });
+
+    console.log(`✅ Standard summary generated (${elapsed}ms)`);
+    console.log(`   Model: ${summary.model}`);
+    console.log(`   Confidence: ${(summary.confidence * 100).toFixed(1)}%`);
+    console.log(`   Length: ${summary.content.length} chars`);
+    console.log(`\n   Content:`);
+    console.log(`   ${"-".repeat(76)}`);
+    console.log(`   ${summary.content}`);
+    console.log(`   ${"-".repeat(76)}`);
+
+    if (summary.keyPoints.length > 0) {
+      console.log(`\n   Key Points:`);
+      summary.keyPoints.forEach((point, i) => {
+        console.log(`   ${i + 1}. ${point}`);
       });
-
-      const elapsed = Date.now() - startTime;
-      totalTime += elapsed;
-
-      // Save summary to database
-      await db.summary.create({
-        data: {
-          summaryType: type,
-          content: summary.content,
-          keyPoints: summary.keyPoints,
-          impactAreas: summary.impactAreas,
-          confidence: summary.confidence,
-          aiModel: summary.model,
-          executiveOrderId: eo.id,
-        },
-      });
-
-      console.log(`✅ ${label} summary generated (${elapsed}ms)`);
-      console.log(`   Model: ${summary.model}`);
-      console.log(`   Confidence: ${(summary.confidence * 100).toFixed(1)}%`);
-      console.log(`   Length: ${summary.content.length} chars`);
-      console.log(`\n   Content:`);
-      console.log(`   ${"-".repeat(76)}`);
-      console.log(`   ${summary.content}`);
-      console.log(`   ${"-".repeat(76)}`);
-
-      if (summary.keyPoints.length > 0) {
-        console.log(`\n   Key Points:`);
-        summary.keyPoints.forEach((point, i) => {
-          console.log(`   ${i + 1}. ${point}`);
-        });
-      }
-
-      if (summary.impactAreas.length > 0) {
-        console.log(`\n   Impact Areas: ${summary.impactAreas.join(", ")}`);
-      }
-
-      console.log(`\n`);
     }
+
+    if (summary.impactAreas.length > 0) {
+      console.log(`\n   Impact Areas: ${summary.impactAreas.join(", ")}`);
+    }
+
+    console.log(`\n`);
+
+    const totalTime = elapsed;
 
     // Step 4: Summary
     console.log(`${"=".repeat(80)}`);
@@ -193,7 +188,7 @@ async function main() {
     console.log(`${"=".repeat(80)}`);
     console.log(`📜 Executive Order: ${orderIdentifier}`);
     console.log(`🧠 Model: ${modelInfo.name}`);
-    console.log(`📊 Summaries Generated: ${summaryTypes.length}`);
+    console.log(`📊 Summaries Generated: 1`);
     console.log(
       `⏱️  Total Time: ${totalTime}ms (${(totalTime / 1000).toFixed(2)}s)`
     );
