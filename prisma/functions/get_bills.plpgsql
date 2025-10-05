@@ -5,8 +5,8 @@ CREATE OR REPLACE FUNCTION get_bills(
   p_category_slug TEXT DEFAULT NULL,
   p_congress INT DEFAULT NULL,
   p_search TEXT DEFAULT NULL,
-  p_sort_field TEXT DEFAULT 'introducedDate',   -- allowed: introducedDate, updatedAt, statusDate
-  p_sort_dir TEXT DEFAULT 'desc'                -- allowed: asc, desc
+  p_sort_field TEXT DEFAULT 'introducedDate',   
+  p_sort_dir TEXT DEFAULT 'desc' 
 )
 RETURNS TABLE (
   id TEXT,
@@ -66,54 +66,54 @@ BEGIN
         COALESCE(
           (
             SELECT jsonb_agg(jsonb_build_object('id', c.id, 'name', c.name, 'slug', c.slug))
-            FROM public.\"_BillCategories\" bc
-            JOIN public.\"Category\" c ON c.id = bc.\"B\"
-            WHERE bc.\"A\" = b.id
+            FROM public."_BillCategories" bc
+            JOIN public."Category" c ON c.id = bc."B"
+            WHERE bc."A" = b.id
           ),
           '[]'::jsonb
         ) AS categories,
         (
           SELECT jsonb_build_object(
             'id', m.id,
-            'fullName', m.\"fullName\",
-            'bioguideId', m.\"bioguideId\",
-            'party', m.\"party\",
-            'state', m.\"state\"
+            'fullName', m."fullName",
+            'bioguideId', m."bioguideId",
+            'party', m."party",
+            'state', m."state"
           )
-          FROM public.\"Member\" m
-          WHERE m.id = b.\"sponsorId\"
+          FROM public."Member" m
+          WHERE m.id = b."sponsorId"
           LIMIT 1
         ) AS sponsor
-      FROM public.\"Bill\" b
-      WHERE b.\"fullText\" IS NOT NULL
+      FROM public."Bill" b
+      WHERE b."fullText" IS NOT NULL
         AND EXISTS (
-          SELECT 1 FROM public.\"Summary\" s
-          WHERE s.\"billId\" = b.id
-            AND s.\"content\" IS NOT NULL
+          SELECT 1 FROM public."Summary" s
+          WHERE s."billId" = b.id
+            AND s."content" IS NOT NULL
         )
-        AND ( $1::public.\"BillStatus\" IS NULL OR b.\"currentStatus\" = $1 )
+        AND ( $1::public."BillStatus" IS NULL OR b."currentStatus" = $1 )
         AND ( $2::TEXT IS NULL OR EXISTS (
-              SELECT 1 FROM public.\"_BillCategories\" bc2
-              JOIN public.\"Category\" c2 ON c2.id = bc2.\"B\"
-              WHERE bc2.\"A\" = b.id AND c2.slug = $2
+              SELECT 1 FROM public."_BillCategories" bc2
+              JOIN public."Category" c2 ON c2.id = bc2."B"
+              WHERE bc2."A" = b.id AND c2.slug = $2
             ))
-        AND ( $3::INT IS NULL OR b.\"congress\" = $3 )
+        AND ( $3::INT IS NULL OR b."congress" = $3 )
         AND ( $4::TEXT IS NULL OR (
               b.title ILIKE '%%' || $4 || '%%'
-              OR b.\"officialTitle\" ILIKE '%%' || $4 || '%%'
-              OR b.\"shortTitle\" ILIKE '%%' || $4 || '%%'
+              OR b."officialTitle" ILIKE '%%' || $4 || '%%'
+              OR b."shortTitle" ILIKE '%%' || $4 || '%%'
             ))
-    )\n
+    )
     SELECT
       f.id,
       f.kind,
-      f.\"billType\",
-      f.\"billNumber\",
+      f."billType",
+      f."billNumber",
       f.congress,
       f.title,
-      f.\"currentStatus\",
+      f."currentStatus",
       f.sort_date,
-      f.\"presidentName\",
+      f."presidentName",
       f.categories,
       f.sponsor,
       COUNT(*) OVER()::bigint AS total_count

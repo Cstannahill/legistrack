@@ -88,7 +88,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
             )}
 
             {/* Type Filter */}
-            <div>
+            {/* <div>
                 <label className="mb-2 block text-sm font-medium">Type</label>
                 <Select value={currentType} onValueChange={(value) => updateFilter('type', value === 'ALL' ? null : value)}>
                     <SelectTrigger>
@@ -102,7 +102,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                         ))}
                     </SelectContent>
                 </Select>
-            </div>
+            </div> */}
 
             {/* Congress Filter - Only for bills */}
             {currentType !== 'EXECUTIVE_ORDERS' && (
