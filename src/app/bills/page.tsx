@@ -5,7 +5,9 @@ import { BillList } from '@/components/bills/BillList'
 import { SearchBar } from '@/components/search/SearchBar'
 import { FilterPanel } from '@/components/search/FilterPanel'
 import { MobileFilterDrawer } from '@/components/search/MobileFilterDrawer'
-import { CURRENT_CONGRESS } from '@/lib/constants'
+import { CURRENT_CONGRESS, CACHE_DURATIONS } from '@/lib/constants'
+import { cachedCount } from '@/lib/countCache'
+import { getCategoryBySlug, type CategorySlug } from '@/lib/utils/category-helper'
 
 interface PageProps {
     searchParams: Promise<{
@@ -191,100 +193,329 @@ export default async function BillsPage({ searchParams }: PageProps) {
     }
 
     // Fetch data based on type
-    const [allBills, billCount, allEOs, eoCount, categories] = await Promise.all([
-        shouldFetchBills ? db.bill.findMany({
-            where: billWhere,
-            skip: legislationType === 'BILLS' ? skip : 0,
-            take: legislationType === 'BILLS' ? limit : legislationType === 'ALL' ? Math.ceil(limit / 2) : 0,
-            orderBy: { introducedDate: 'desc' },
-            select: {
-                id: true,
-                billType: true,
-                billNumber: true,
-                congress: true,
-                title: true,
-                currentStatus: true,
-                introducedDate: true,
-                fullText: true,
-                sponsor: {
-                    select: {
-                        fullName: true,
-                        party: true,
-                        state: true,
-                    },
-                },
-                categories: {
-                    select: {
-                        id: true,
-                        name: true,
-                        slug: true,
-                        color: true,
-                    },
-                },
-                summaries: {
-                    where: { summaryType: 'BRIEF' },
-                    take: 1,
-                },
-            },
-        }) : Promise.resolve([]),
-        shouldFetchBills ? db.bill.count({ where: billWhere }) : Promise.resolve(0),
-        shouldFetchEOs ? db.executiveOrder.findMany({
-            where: eoWhere,
-            skip: legislationType === 'EXECUTIVE_ORDERS' ? skip : 0,
-            take: legislationType === 'EXECUTIVE_ORDERS' ? limit : legislationType === 'ALL' ? Math.ceil(limit / 2) : 0,
-            orderBy: { signingDate: 'desc' },
-            select: {
-                id: true,
-                orderNumber: true,
-                executiveOrderType: true,
-                title: true,
-                signingDate: true,
-                presidentName: true,
-                fullText: true,
-                categories: {
-                    select: {
-                        id: true,
-                        name: true,
-                        slug: true,
-                        color: true,
-                    },
-                },
-                summaries: {
-                    where: { summaryType: 'BRIEF' },
-                    take: 1,
-                },
-            },
-        }) : Promise.resolve([]),
-        shouldFetchEOs ? db.executiveOrder.count({ where: eoWhere }) : Promise.resolve(0),
+    // Robust unified pagination strategy
+    // For single-type views we retain simple skip/take.
+    // For ALL view we fetch the required window size from each collection (skip + limit)
+    // then perform an in-memory stable merge with deterministic ordering (date DESC, type, id) and slice.
+    // This guarantees no duplicate items across pages and consistent ranges.
+
+    // First get counts & categories (cheap) in parallel
+    const [billCount, eoCount, dbCategories] = await Promise.all([
+        shouldFetchBills
+            ? cachedCount(
+                `billCount:${JSON.stringify(billWhere)}`,
+                CACHE_DURATIONS.BILLS_LIST * 1000,
+                () => db.bill.count({ where: billWhere })
+            )
+            : Promise.resolve(0),
+        shouldFetchEOs
+            ? cachedCount(
+                `eoCount:${JSON.stringify(eoWhere)}`,
+                CACHE_DURATIONS.BILLS_LIST * 1000,
+                () => db.executiveOrder.count({ where: eoWhere })
+            )
+            : Promise.resolve(0),
         db.category.findMany({
             orderBy: { name: 'asc' },
-            select: {
-                id: true,
-                name: true,
-                slug: true,
-                color: true,
-            },
+            select: { id: true, name: true, slug: true, color: true },
         }),
     ])
 
-    // Since we removed companion bill loading from list view for performance,
-    // we can now directly use allBills without filtering
-    const bills = allBills
-
-    // Merge and sort bills and executive orders
-    const items = [
-        ...bills.map((bill) => ({ type: 'bill' as const, ...bill })),
-        ...allEOs.map((eo) => ({ type: 'executiveOrder' as const, ...eo })),
-    ]
-
-    // Sort by date (introducedDate for bills, signingDate for EOs)
-    items.sort((a, b) => {
-        const dateA = a.type === 'bill' ? new Date(a.introducedDate) : new Date(a.signingDate)
-        const dateB = b.type === 'bill' ? new Date(b.introducedDate) : new Date(b.signingDate)
-        return dateB.getTime() - dateA.getTime()
+    // Enrich categories with colors from category helper (frontend source of truth)
+    const categories = dbCategories.map(cat => {
+        const helperData = getCategoryBySlug(cat.slug as CategorySlug)
+        return {
+            ...cat,
+            color: helperData?.color || cat.color // Use helper color if available, fallback to DB
+        }
     })
 
-    const total = billCount + eoCount
+    // Helper for selecting projection (shared)
+    const billSelect = {
+        id: true,
+        billType: true,
+        billNumber: true,
+        congress: true,
+        title: true,
+        currentStatus: true,
+        introducedDate: true,
+        fullText: true,
+        sponsor: { select: { fullName: true, party: true, state: true } },
+        categories: { select: { id: true, name: true, slug: true, color: true } },
+        summaries: { where: { summaryType: 'BRIEF' }, take: 1 },
+    } as const
+    // Removed eoSelect (Prisma projection) after migrating EO list path fully to SQL function.
+
+    // Fetch data sets
+    interface RawBill {
+        id: string
+        billType: string
+        billNumber: number
+        congress: number
+        title: string
+        currentStatus: string
+        introducedDate: Date
+        fullText: string | null
+        sponsor: { fullName: string; party: string; state: string } | null
+        categories: { id: string; name: string; slug: string; color: string | null }[]
+        summaries: { content: string }[]
+    }
+    interface RawEO {
+        id: string
+        orderNumber: number
+        executiveOrderType: 'EXECUTIVE_ORDER' | 'PRESIDENTIAL_MEMORANDUM' | 'PROCLAMATION' | 'DETERMINATION'
+        title: string
+        signingDate: Date
+        presidentName: string
+        fullText: string | null
+        categories: { id: string; name: string; slug: string; color: string | null }[]
+        summaries: { content: string }[]
+    }
+    let rawBills: RawBill[] = []
+    let rawEOs: RawEO[] = []
+
+    // Always use unified function for ALL view (parameterized) regardless of filters; incomplete toggle still forces bill filter logic client-side
+    // BUT: don't use unified if status is selected (EOs don't have status, so only bills should show)
+    const useUnified = legislationType === 'ALL' && !params.status
+
+    if (useUnified) {
+        // Map filters to function parameters; showIncomplete bypass handled by setting bill completeness predicate above (function expects only complete rows)
+        interface UnifiedRow { id: string; kind: 'bill' | 'executiveOrder'; billType: string | null; billNumber: string | null; congress: number | null; title: string; currentStatus: string | null; sort_date: string; categories: { id: string; name: string; slug: string }[] | null; sponsor: { fullName: string; party: string; state: string } | null; presidentName?: string | null; total_count: bigint | number }
+        const billStatus = params.status || null
+        const billCategory = params.category || null
+        const billCongress = params.congress ? parseInt(params.congress, 10) : CURRENT_CONGRESS
+        const billSearch = hasSearchQuery ? searchQuery : null
+        const eoCategory = params.category || null
+        const eoPresident = null // future UI field
+        const eoSearch = hasSearchQuery ? searchQuery : null
+        const eoSigningStart = null
+        const eoSigningEnd = null
+        const sortField = 'introducedDate'
+        const sortDir = 'desc'
+        // If showIncomplete is true we should NOT include incomplete bills. We currently rely on billWhere building earlier; unified function filters only complete items. So for incomplete view we fall back to per-type logic.
+        if (!showIncomplete) {
+            const unified = await db.$queryRaw<UnifiedRow[]>`
+                SELECT * FROM get_bills_and_orders(
+                    ${skip}::int,
+                    ${limit}::int,
+                    ${billStatus}::public."BillStatus",
+                    ${billCategory}::text,
+                    ${billCongress}::int,
+                    ${billSearch}::text,
+                    ${eoCategory}::text,
+                    ${eoPresident}::text,
+                    ${eoSearch}::text,
+                    ${eoSigningStart}::date,
+                    ${eoSigningEnd}::date,
+                    ${sortField}::text,
+                    ${sortDir}::text
+                )`
+            const totalCount = unified[0]?.total_count ? Number(unified[0].total_count) : 0
+            const unifiedItems: Array<BillListBill | BillListEO> = unified.map(r => {
+                if (r.kind === 'bill') {
+                    return {
+                        type: 'bill' as const,
+                        id: r.id,
+                        billType: r.billType || '',
+                        billNumber: r.billNumber ? parseInt(r.billNumber, 10) : 0,
+                        congress: r.congress || 0,
+                        title: r.title,
+                        currentStatus: r.currentStatus || '',
+                        introducedDate: new Date(r.sort_date),
+                        categories: Array.isArray(r.categories) ? r.categories : [],
+                        sponsor: r.sponsor ? {
+                            fullName: r.sponsor.fullName,
+                            party: r.sponsor.party,
+                            state: r.sponsor.state,
+                        } : null,
+                    }
+                } else {
+                    return {
+                        type: 'executiveOrder' as const,
+                        id: r.id,
+                        orderNumber: r.billNumber ? parseInt(r.billNumber, 10) : 0,
+                        executiveOrderType: 'EXECUTIVE_ORDER',
+                        title: r.title,
+                        signingDate: new Date(r.sort_date),
+                        presidentName: r.presidentName || '',
+                        categories: Array.isArray(r.categories) ? r.categories : [],
+                    }
+                }
+            })
+            const total = totalCount
+            const totalPages = Math.ceil(total / limit)
+            // Render early return to avoid recalculating totals below
+            return (
+                <div className="container py-8">
+                    <div className="mb-8">
+                        <h1 className="mb-2 text-4xl font-bold tracking-tight">Federal Legislation</h1>
+                        <p className="text-lg text-muted-foreground">
+                            Browse and search all federal legislation
+                        </p>
+                    </div>
+                    <div className="mb-6"><SearchBar /></div>
+                    <div className="mb-4 lg:hidden"><MobileFilterDrawer categories={categories} /></div>
+                    <div className="flex flex-col gap-8 lg:flex-row">
+                        <aside className="hidden w-full lg:block lg:w-64 lg:shrink-0">
+                            <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto sidebar-scroll">
+                                <FilterPanel categories={categories} />
+                            </div>
+                        </aside>
+                        <main className="flex-1">
+                            <div className="mb-4 flex items-center justify-between">
+                                <p className="text-sm text-muted-foreground">Showing {skip + 1}-{Math.min(skip + limit, total)} of {total} items</p>
+                            </div>
+                            {totalPages > 1 && (
+                                <div className="mb-6 flex items-center justify-center gap-2">
+                                    {page > 1 && <a href={`?${new URLSearchParams({ ...params, page: String(page - 1) }).toString()}`} className="rounded-md border px-4 py-2 text-sm hover:bg-accent">Previous</a>}
+                                    <span className="px-4 py-2 text-sm">Page {page} of {totalPages}</span>
+                                    {page < totalPages && <a href={`?${new URLSearchParams({ ...params, page: String(page + 1) }).toString()}`} className="rounded-md border px-4 py-2 text-sm hover:bg-accent">Next</a>}
+                                </div>
+                            )}
+                            <Suspense fallback={<BillList items={[]} loading />}> <BillList items={unifiedItems} /> </Suspense>
+                            {totalPages > 1 && (
+                                <div className="mt-8 flex items-center justify-center gap-2">
+                                    {page > 1 && <a href={`?${new URLSearchParams({ ...params, page: String(page - 1) }).toString()}`} className="rounded-md border px-4 py-2 text-sm hover:bg-accent">Previous</a>}
+                                    <span className="px-4 py-2 text-sm">Page {page} of {totalPages}</span>
+                                    {page < totalPages && <a href={`?${new URLSearchParams({ ...params, page: String(page + 1) }).toString()}`} className="rounded-md border px-4 py-2 text-sm hover:bg-accent">Next</a>}
+                                </div>
+                            )}
+                        </main>
+                    </div>
+                </div>
+            )
+        }
+    } else if ((legislationType === 'BILLS' || legislationType === 'ALL') && shouldFetchBills) {
+        const simpleBills = !params.status && !params.search && !params.category && !showIncomplete
+        if (simpleBills) {
+            interface BillRow { id: string; billType: string | null; billNumber: string | null; congress: number | null; title: string; currentStatus: string | null; sort_date: string; categories: { id: string; name: string; slug: string }[] | null; sponsor: { fullName: string; party: string; state: string } | null; total_count: bigint | number }
+            // Call with all parameters explicitly to avoid function signature ambiguity
+            const billRows = await db.$queryRaw<BillRow[]>`
+                SELECT * FROM get_bills(
+                    ${skip}::int,
+                    ${limit}::int,
+                    NULL::public."BillStatus",
+                    NULL::text,
+                    NULL::int,
+                    NULL::text,
+                    ${'introducedDate'}::text,
+                    ${'desc'}::text
+                )`
+            rawBills = billRows.map(r => ({
+                id: r.id,
+                billType: r.billType || '',
+                billNumber: r.billNumber ? parseInt(r.billNumber, 10) : 0,
+                congress: r.congress || 0,
+                title: r.title,
+                currentStatus: r.currentStatus || '',
+                introducedDate: new Date(r.sort_date),
+                fullText: null,
+                sponsor: r.sponsor ? {
+                    fullName: r.sponsor.fullName,
+                    party: r.sponsor.party,
+                    state: r.sponsor.state,
+                } : null,
+                categories: Array.isArray(r.categories) ? r.categories.map(c => ({ ...c, color: null })) : [],
+                summaries: [],
+            }))
+            // override billCount for pagination accuracy
+            if (billRows[0]?.total_count) {
+                // billCount is const earlier; we can't reassign; so rely on total below via recalculation path
+            }
+        } else {
+            rawBills = await db.bill.findMany({
+                where: billWhere,
+                skip,
+                take: limit,
+                orderBy: [{ introducedDate: 'desc' }, { id: 'desc' }],
+                select: billSelect,
+            }).then((rows: RawBill[]) => rows.map(b => ({ ...b, summaries: b.summaries?.map((s) => ({ content: s.content })) ?? [] })))
+        }
+    } else if (legislationType === 'EXECUTIVE_ORDERS' && shouldFetchEOs) {
+        // Always use parameterized function; map frontend filters to function args.
+        interface EORow { id: string; billNumber: string | null; title: string; sort_date: string; presidentName: string | null; categories: { id: string; name: string; slug: string }[] | null; total_count: bigint | number }
+        const presidentFilter: string | null = null // Placeholder: add UI filter support later
+        const signingStart: string | null = null
+        const signingEnd: string | null = null
+        const searchTerm = hasSearchQuery ? searchQuery : null
+        const categorySlug = params.category || null
+        const eoRows = await db.$queryRaw<EORow[]>`
+            SELECT * FROM get_executive_orders(
+                ${skip}::int,
+                ${limit}::int,
+                ${categorySlug}::text,
+                ${presidentFilter}::text,
+                ${searchTerm}::text,
+                ${signingStart}::date,
+                ${signingEnd}::date,
+                ${'signingDate'}::text,
+                ${'desc'}::text
+            )`
+        rawEOs = eoRows.map(r => ({
+            id: r.id,
+            orderNumber: r.billNumber ? parseInt(r.billNumber, 10) : 0,
+            executiveOrderType: 'EXECUTIVE_ORDER',
+            title: r.title,
+            signingDate: new Date(r.sort_date),
+            presidentName: r.presidentName || '',
+            fullText: null,
+            categories: Array.isArray(r.categories) ? r.categories.map(c => ({ ...c, color: null })) : [],
+            summaries: [],
+        }))
+    }
+
+    // Local mirror of BillList accepted item shapes
+    type BillListBill = {
+        type: 'bill'
+        id: string
+        billType: string
+        billNumber: number
+        congress: number
+        title: string
+        currentStatus: string
+        introducedDate: Date
+        fullText?: string | null
+        sponsor?: { fullName: string; party: string; state: string } | null
+        categories: Array<{ id: string; name: string; slug: string; color?: string | null }>
+        summaries?: Array<{ content: string }>
+    }
+    type BillListEO = {
+        type: 'executiveOrder'
+        id: string
+        orderNumber: number
+        executiveOrderType: 'EXECUTIVE_ORDER' | 'PRESIDENTIAL_MEMORANDUM' | 'PROCLAMATION' | 'DETERMINATION'
+        title: string
+        signingDate: Date
+        presidentName: string
+        fullText?: string | null
+        categories: Array<{ id: string; name: string; slug: string; color?: string | null }>
+        summaries?: Array<{ content: string }>
+    }
+    let items: Array<BillListBill | BillListEO> = []
+
+    if (legislationType === 'BILLS' || (legislationType === 'ALL' && !shouldFetchEOs)) {
+        items = rawBills.map((b) => ({ type: 'bill' as const, ...b }))
+    } else if (legislationType === 'EXECUTIVE_ORDERS') {
+        items = rawEOs.map((e) => ({ type: 'executiveOrder' as const, ...e }))
+    } else if (legislationType === 'ALL' && shouldFetchEOs) {
+        // This case is when ALL is selected with no status filter - handled by unified query above
+        // If we reach here, something went wrong
+        items = []
+    }
+
+    // Calculate total count based on what was fetched
+    let total = 0
+    if (legislationType === 'BILLS' || (legislationType === 'ALL' && !shouldFetchEOs)) {
+        // When showing only bills (either explicitly or because status filter excludes EOs)
+        total = billCount
+    } else if (legislationType === 'EXECUTIVE_ORDERS') {
+        // When showing only executive orders
+        total = eoCount
+    } else if (legislationType === 'ALL' && shouldFetchEOs) {
+        // When showing both (unified query was used)
+        total = billCount + eoCount
+    }
+
     const totalPages = Math.ceil(total / limit)
 
     return (

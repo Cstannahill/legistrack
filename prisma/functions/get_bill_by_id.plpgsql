@@ -1,0 +1,234 @@
+CREATE OR REPLACE FUNCTION get_bill_by_id(bill_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  result JSONB;
+BEGIN
+  WITH target AS (
+    SELECT b.*
+    FROM public."Bill" b
+    WHERE b.id = bill_id
+  ),
+  sponsor AS (
+    SELECT m.id, m."fullName", m.party, m.state, m."bioguideId"
+    FROM public."Member" m
+    JOIN target t ON m.id = t."sponsorId"
+  ),
+  companion_rel AS (
+    SELECT cb."companionBillId" AS companion_id, cb."relationshipType"
+    FROM public."CompanionBill" cb
+    JOIN target t ON cb."sourceBillId" = t.id
+  )
+  SELECT jsonb_build_object(
+    'id', t.id,
+    'billType', t."billType",
+    'billNumber', t."billNumber",
+    'congress', t."congress",
+    'title', t.title,
+    'shortTitle', t."shortTitle",
+    'officialTitle', t."officialTitle",
+    'currentStatus', t."currentStatus",
+    'statusDate', t."statusDate",
+    'introducedDate', t."introducedDate",
+    'lawNumber', t."lawNumber",
+    'fullText', t."fullText",
+    'fullTextUrl', t."fullTextUrl",
+    'sponsor', (
+      SELECT jsonb_build_object(
+        'id', s.id, 
+        'fullName', s."fullName", 
+        'party', s.party, 
+        'state', s.state, 
+        'bioguideId', s."bioguideId"
+      ) 
+      FROM sponsor s
+    ),
+    'categories', COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'id', cat.id, 
+          'name', cat.name, 
+          'slug', cat.slug, 
+          'color', cat.color
+        )
+      )
+      FROM (
+        SELECT c.id, c.name, c.slug, c.color
+        FROM public."_BillCategories" bc2
+        JOIN public."Category" c ON c.id = bc2."B"
+        WHERE bc2."A" = t.id
+        ORDER BY c.name
+      ) AS cat
+    ), '[]'::jsonb),
+    'summaries', COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'summaryType', summ."summaryType",
+          'content', summ.content,
+          'keyPoints', summ."keyPoints",
+          'impactAreas', summ."impactAreas",
+          'aiModel', summ."aiModel",
+          'generatedAt', summ."generatedAt"
+        )
+      )
+      FROM (
+        SELECT s2."summaryType", s2.content, s2."keyPoints", s2."impactAreas", s2."aiModel", s2."generatedAt"
+        FROM public."Summary" s2
+        WHERE s2."billId" = t.id
+        ORDER BY s2."generatedAt" DESC
+      ) AS summ
+    ), '[]'::jsonb),
+    'actions', COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'id', actions.id, 
+          'actionDate', actions."actionDate", 
+          'text', actions.text, 
+          'actionCode', actions."actionCode"
+        )
+      )
+      FROM (
+        SELECT a2.id, a2."actionDate", a2.text, a2."actionCode"
+        FROM public."Action" a2
+        WHERE a2."billId" = t.id
+        ORDER BY a2."actionDate" DESC
+        LIMIT 20
+      ) AS actions
+    ), '[]'::jsonb),
+    'cosponsors', COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'id', m.id, 
+          'fullName', m."fullName", 
+          'party', m.party, 
+          'state', m.state
+        )
+      )
+      FROM (
+        SELECT m.*
+        FROM public."_Cosponsored" cs2
+        JOIN public."Member" m ON m.id = cs2."B"
+        WHERE cs2."A" = t.id
+        ORDER BY m."lastName", m."firstName"
+        LIMIT 10
+      ) AS m
+    ), '[]'::jsonb),
+    'companionBills', COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'id', cb.id,
+          'billType', cb."billType",
+          'billNumber', cb."billNumber",
+          'congress', cb."congress",
+          'title', cb.title,
+          'currentStatus', cb."currentStatus",
+          'introducedDate', cb."introducedDate",
+          'statusDate', cb."statusDate",
+          'lawNumber', cb."lawNumber",
+          'shortTitle', cb."shortTitle",
+          'officialTitle', cb."officialTitle",
+          'fullText', cb."fullText",
+          'fullTextUrl', cb."fullTextUrl",
+          'sponsor', cb.sponsor_data,
+          'categories', cb.categories_data,
+          'summaries', cb.summaries_data,
+          'actions', cb.actions_data,
+          'cosponsors', cb.cosponsors_data
+        )
+      )
+      FROM (
+        SELECT 
+          cb2.*,
+          (
+            SELECT jsonb_build_object(
+              'id', m2.id, 
+              'fullName', m2."fullName", 
+              'party', m2.party, 
+              'state', m2.state, 
+              'bioguideId', m2."bioguideId"
+            )
+            FROM public."Member" m2 
+            WHERE m2.id = cb2."sponsorId"
+          ) AS sponsor_data,
+          COALESCE((
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'id', cat3.id, 
+                'name', cat3.name, 
+                'slug', cat3.slug, 
+                'color', cat3.color
+              )
+            )
+            FROM (
+              SELECT c3.id, c3.name, c3.slug, c3.color
+              FROM public."_BillCategories" bc3
+              JOIN public."Category" c3 ON c3.id = bc3."B"
+              WHERE bc3."A" = cb2.id
+              ORDER BY c3.name
+            ) AS cat3
+          ), '[]'::jsonb) AS categories_data,
+          COALESCE((
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'summaryType', summ3."summaryType",
+                'content', summ3.content,
+                'keyPoints', summ3."keyPoints",
+                'impactAreas', summ3."impactAreas",
+                'aiModel', summ3."aiModel",
+                'generatedAt', summ3."generatedAt"
+              )
+            )
+            FROM (
+              SELECT s3."summaryType", s3.content, s3."keyPoints", s3."impactAreas", s3."aiModel", s3."generatedAt"
+              FROM public."Summary" s3
+              WHERE s3."billId" = cb2.id
+              ORDER BY s3."generatedAt" DESC
+            ) AS summ3
+          ), '[]'::jsonb) AS summaries_data,
+          COALESCE((
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'id', act3.id, 
+                'actionDate', act3."actionDate", 
+                'text', act3.text, 
+                'actionCode', act3."actionCode"
+              )
+            )
+            FROM (
+              SELECT a3.id, a3."actionDate", a3.text, a3."actionCode"
+              FROM public."Action" a3
+              WHERE a3."billId" = cb2.id
+              ORDER BY a3."actionDate" DESC
+            ) AS act3
+          ), '[]'::jsonb) AS actions_data,
+          COALESCE((
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'id', cosp3.id, 
+                'fullName', cosp3."fullName", 
+                'party', cosp3.party, 
+                'state', cosp3.state
+              )
+            )
+            FROM (
+              SELECT m3.id, m3."fullName", m3.party, m3.state
+              FROM public."_Cosponsored" cs4
+              JOIN public."Member" m3 ON m3.id = cs4."B"
+              WHERE cs4."A" = cb2.id
+              ORDER BY m3."lastName", m3."firstName"
+            ) AS cosp3
+          ), '[]'::jsonb) AS cosponsors_data
+        FROM public."Bill" cb2
+        JOIN public."CompanionBill" cbr ON cbr."companionBillId" = cb2.id
+        WHERE cbr."sourceBillId" = t.id
+      ) AS cb
+    ), '[]'::jsonb),
+    'companionOf', '[]'::jsonb
+  )
+  INTO result
+  FROM target t;
+  
+  RETURN result;
+END;
+$$;

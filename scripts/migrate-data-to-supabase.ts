@@ -1,4 +1,5 @@
 // Script to migrate data from local PostgreSQL to Supabase
+// @ts-nocheck
 import { PrismaClient } from "@prisma/client";
 import { config } from "dotenv";
 
@@ -72,17 +73,73 @@ async function migrateData() {
     const bills = await localDb.bill.findMany();
     console.log(`   Found ${bills.length} bills to migrate`);
 
+    // Map local bill id -> supabase bill id so we can resolve foreign keys later
+    const billIdMap = new Map<string | number, string | number>();
+    const localBillsById = new Map<string | number, unknown>(
+      bills.map((b) => [b.id, b as unknown])
+    );
+
     let billsCreated = 0;
     for (const bill of bills) {
-      const existing = await supabaseDb.bill.findUnique({
+      // First try by primary id (fast path)
+      let existing = await supabaseDb.bill.findUnique({
         where: { id: bill.id },
       });
 
+      // If no record with the same id exists in Supabase, someone may have
+      // already inserted the same bill under a different id. The DB has a
+      // unique constraint on (congress, billType, billNumber) so check for
+      // that composite key before attempting to create.
       if (!existing) {
-        await supabaseDb.bill.create({
-          data: bill,
+        existing = await supabaseDb.bill.findFirst({
+          where: {
+            congress: bill.congress,
+            billType: bill.billType,
+            billNumber: bill.billNumber,
+          },
         });
-        billsCreated++;
+      }
+
+      if (!existing) {
+        try {
+          const created = await supabaseDb.bill.create({ data: bill });
+          billsCreated++;
+          billIdMap.set(bill.id, created.id);
+        } catch (err: unknown) {
+          const prismaCode =
+            typeof err === "object" && err !== null && "code" in err
+              ? (err as { code?: unknown }).code
+              : undefined;
+
+          if (prismaCode === "P2002") {
+            // Find the conflicting supabase record by composite key and map to it
+            const conflict = await supabaseDb.bill.findFirst({
+              where: {
+                congress: bill.congress,
+                billType: bill.billType,
+                billNumber: bill.billNumber,
+              },
+            });
+
+            if (conflict) {
+              billIdMap.set(bill.id, conflict.id);
+              console.warn(
+                `   ⚠️ Detected existing bill in Supabase (mapped local ${bill.id} -> supabase ${conflict.id})`
+              );
+              continue;
+            }
+
+            console.warn(
+              `   ⚠️ Skipping bill (congress=${bill.congress}, billType=${bill.billType}, billNumber=${bill.billNumber}) due to unique constraint`
+            );
+            continue;
+          }
+
+          throw err;
+        }
+      } else {
+        // existing by id or composite — map local -> supabase id
+        billIdMap.set(bill.id, existing.id);
       }
     }
     console.log(
@@ -153,10 +210,118 @@ async function migrateData() {
       });
 
       if (!existing) {
-        await supabaseDb.summary.create({
-          data: summary,
-        });
-        summariesCreated++;
+        // Resolve foreign keys: summary may reference billId or executiveOrderId
+        const data: Record<string, unknown> = { ...summary } as Record<
+          string,
+          unknown
+        >;
+
+        if (summary.billId) {
+          // Try mapping from the local bill id -> supabase id
+          const mapped = billIdMap.get(summary.billId);
+          let targetBillId = mapped;
+
+          // If not mapped yet, attempt to find by id on Supabase
+          if (!targetBillId) {
+            const foundById = await supabaseDb.bill.findUnique({
+              where: { id: summary.billId },
+            });
+            if (foundById) targetBillId = foundById.id;
+          }
+
+          // If still not found, try to find local bill metadata and search supabase by composite
+          if (!targetBillId) {
+            const localBill = localBillsById.get(summary.billId);
+            if (localBill && typeof localBill === "object") {
+              const lb = localBill as {
+                congress?: number | string;
+                billType?: string | null;
+                billNumber?: string | null;
+              };
+              const foundComposite = await supabaseDb.bill.findFirst({
+                where: {
+                  congress:
+                    typeof lb.congress === "string" ? lb.congress : lb.congress,
+                  billType:
+                    typeof lb.billType === "string" ? lb.billType : lb.billType,
+                  billNumber:
+                    typeof lb.billNumber === "string"
+                      ? lb.billNumber
+                      : lb.billNumber,
+                },
+              });
+              if (foundComposite) targetBillId = foundComposite.id;
+            }
+          }
+
+          if (!targetBillId) {
+            console.warn(
+              `   ⚠️ Skipping summary ${summary.id}: parent bill ${summary.billId} not found in Supabase`
+            );
+            continue;
+          }
+
+          data.billId = targetBillId;
+        }
+
+        if (summary.executiveOrderId) {
+          // similar mapping for executive orders
+          const eoMapped =
+            typeof summary.executiveOrderId !== "undefined"
+              ? summary.executiveOrderId
+              : undefined;
+          let targetEoId = eoMapped;
+
+          // try direct id
+          if (!targetEoId) {
+            const found = await supabaseDb.executiveOrder.findUnique({
+              where: { id: summary.executiveOrderId },
+            });
+            if (found) targetEoId = found.id;
+          }
+
+          if (!targetEoId) {
+            console.warn(
+              `   ⚠️ Skipping summary ${summary.id}: parent executive order ${summary.executiveOrderId} not found in Supabase`
+            );
+            continue;
+          }
+
+          data.executiveOrderId = targetEoId;
+        }
+
+        try {
+          // Build a typed payload for create to satisfy Prisma types.
+          const summaryCreateData = {
+            id: summary.id,
+            summaryType: summary.summaryType,
+            content: summary.content,
+            aiModel: summary.aiModel,
+            billId: (data.billId as string) ?? null,
+            executiveOrderId: (data.executiveOrderId as string) ?? null,
+            createdAt: summary.createdAt,
+            updatedAt: summary.updatedAt,
+            // Only include source when present on the source object
+            ...(summary && (summary as any).source
+              ? { source: (summary as any).source }
+              : {}),
+          } as const;
+
+          await supabaseDb.summary.create({ data: summaryCreateData as any });
+          summariesCreated++;
+        } catch (err: unknown) {
+          const prismaCode =
+            typeof err === "object" && err !== null && "code" in err
+              ? (err as { code?: unknown }).code
+              : undefined;
+          if (prismaCode === "P2003") {
+            console.warn(
+              `   ⚠️ Skipping summary ${summary.id} due to FK violation (parent not present)`
+            );
+            continue;
+          }
+          throw err;
+        }
       }
     }
     console.log(

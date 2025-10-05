@@ -1,0 +1,70 @@
+CREATE OR REPLACE FUNCTION get_executive_order_by_id(exec_order_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  result JSONB;
+BEGIN
+  WITH target AS (
+    SELECT eo.*
+    FROM public."ExecutiveOrder" eo
+    WHERE eo.id = exec_order_id
+  )
+  SELECT jsonb_build_object(
+    'id', t.id,
+    'orderNumber', t."orderNumber",
+    'title', t.title,
+    'executiveOrderType', t."executiveOrderType",
+    'presidentName', t."presidentName",
+    'signingDate', t."signingDate",
+    'publicationDate', t."publicationDate",
+    'lastFetchedAt', t."lastFetchedAt",
+    'fullText', t."fullText",
+    'fullTextUrl', t."fullTextUrl",
+    'federalRegisterUrl', t."federalRegisterUrl",
+    'categories', COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'id', cat.id,
+          'name', cat.name,
+          'slug', cat.slug,
+          'color', cat.color
+        )
+      )
+      FROM (
+        SELECT c.id, c.name, c.slug, c.color
+        FROM public."_ExecutiveOrderCategories" ec
+        JOIN public."Category" c ON c.id = ec."A"
+        WHERE ec."B" = t.id
+        ORDER BY c.name
+      ) AS cat
+    ), '[]'::jsonb),
+    'summaries', COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'id', summ.id,
+          'summaryType', summ."summaryType",
+          'content', summ.content,
+          'keyPoints', summ."keyPoints",
+          'impactAreas', summ."impactAreas",
+          'aiModel', summ."aiModel",
+          'confidence', summ.confidence,
+          'generatedAt', summ."generatedAt",
+          'reviewed', summ."reviewed",
+          'reviewedBy', summ."reviewedBy",
+          'reviewedAt', summ."reviewedAt"
+        )
+      )
+      FROM (
+        SELECT s.id, s."summaryType", s.content, s."keyPoints", s."impactAreas", s."aiModel", s.confidence, s."generatedAt", s."reviewed", s."reviewedBy", s."reviewedAt"
+        FROM public."Summary" s
+        WHERE s."executiveOrderId" = t.id
+        ORDER BY s."generatedAt" DESC
+      ) AS summ
+    ), '[]'::jsonb)
+  ) INTO result
+  FROM target t;
+
+  RETURN result;
+END;
+$$;
