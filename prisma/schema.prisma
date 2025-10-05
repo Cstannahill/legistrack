@@ -41,6 +41,8 @@ model Bill {
   @@index([billType, billNumber])
   @@index([currentStatus])
   @@index([introducedDate])
+  // Added composite index for stable ordered pagination (date + id)
+  @@index([introducedDate, id])
   @@index([congress])
 }
 
@@ -79,6 +81,8 @@ model ExecutiveOrder {
   categories         Category[]         @relation("ExecutiveOrderCategories")
 
   @@index([signingDate])
+  // Added composite index for stable ordered pagination (date + id)
+  @@index([signingDate, id])
 }
 
 model Summary {

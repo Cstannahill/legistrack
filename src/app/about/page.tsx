@@ -1,7 +1,48 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { db } from "@/lib/db";
 
-export default function AboutPage() {
+async function getCoverageMonths() {
+    // 1) Retrieve today's date
+    const today = new Date();
+
+    // 2) Query DB for the oldest introducedDate among bills
+    const oldest = await db.bill.findFirst({
+        orderBy: { introducedDate: "asc" },
+        select: { introducedDate: true },
+    });
+
+    // Validation: if no bills
+    if (!oldest || !oldest.introducedDate) {
+        return { status: "no-bills" } as const; // validated: no bills found
+    }
+
+    const introduced = new Date(oldest.introducedDate);
+
+    // Validation: introduced date in future
+    if (introduced > today) {
+        return { status: "future" } as const; // validated: oldest date is in future
+    }
+
+    // 3) Calculate months difference (rounded to nearest whole number)
+    const yearsDiff = today.getFullYear() - introduced.getFullYear();
+    const monthsDiff = today.getMonth() - introduced.getMonth();
+    const daysDiff = today.getDate() - introduced.getDate();
+
+    let totalMonths = yearsDiff * 12 + monthsDiff;
+    // Adjust if days difference crosses the halfway point of a month
+    if (daysDiff >= 15) totalMonths += 1;
+    if (totalMonths < 0) totalMonths = 0;
+
+    // 4) Return computed months with singular/plural logic
+    return { status: "ok" as const, months: totalMonths };
+}
+
+export default async function AboutPage() {
+    const coverage = await getCoverageMonths();
+
+    // Validation is handled inside getCoverageMonths(); proceed to render
+
     return (
         <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
             <div className="container mx-auto px-4 py-12 max-w-4xl">
@@ -68,9 +109,23 @@ export default function AboutPage() {
                             Coverage
                         </h2>
                         <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                            Currently, our database includes legislation from the <strong>past 10 months</strong>.
-                            In future iterations, we plan to expand our coverage to include all available
-                            historical legislation, providing a comprehensive archive of government actions.
+                            {coverage.status === "no-bills" ? (
+                                <strong>No legislative data available.</strong>
+                            ) : coverage.status === "future" ? (
+                                <strong>Data start date is in the future.</strong>
+                            ) : (
+                                (() => {
+                                    const months = coverage.months;
+                                    const label = months === 1 ? "month" : "months";
+                                    return (
+                                        <>
+                                            Currently, our database includes legislation from the <strong>past {months} {label}</strong>.
+                                            In future iterations, we plan to expand our coverage to include all available
+                                            historical legislation, providing a comprehensive archive of government actions.
+                                        </>
+                                    );
+                                })()
+                            )}
                         </p>
                     </section>
 

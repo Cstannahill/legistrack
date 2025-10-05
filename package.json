@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "db:apply-functions": "tsx scripts/apply-sql-functions.ts",
     "db:migrate-to-supabase": "tsx scripts/migrate-data-to-supabase.ts",
     "db:normalize-types": "tsx scripts/normalize-bill-types.ts",
     "check-env": "tsx scripts/check-env.ts",
@@ -21,6 +22,7 @@
     "fetch-bills-paginated": "tsx scripts/fetch-bills-paginated.ts",
     "fetch-bills-recent": "tsx scripts/fetch-bills-recent.ts",
     "fetch-bill-texts": "tsx scripts/fetch-bill-texts.ts",
+    "fetch-bill-actions": "tsx scripts/fetch-bill-actions.ts",
     "fetch-executive-orders": "tsx scripts/fetch-executive-orders.ts",
     "update-eo-full-text": "tsx scripts/update-eo-full-text.ts",
     "test-federal-register": "tsx scripts/test-federal-register-api.ts",
@@ -42,7 +44,9 @@
     "gen-sum-or-eo": "tsx scripts/test-generate-summary-openrouter-eo.ts",
     "test-single-bill": "tsx scripts/test-single-bill.ts",
     "test-fetch-veteran-bills": "tsx scripts/test-fetch-veteran-bills.ts",
-    "test-companion-bills": "tsx scripts/test-companion-bills.ts"
+    "test-companion-bills": "tsx scripts/test-companion-bills.ts",
+    "test-search-regression": "tsx scripts/test-search-regression.ts",
+    "gpt-usage": "tsx scripts/fetch-openai-usage-gpt5nano.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -66,7 +70,7 @@
     "inngest": "^3.44.0",
     "lucide-react": "^0.544.0",
     "next": "15.5.4",
-    "openai": "^6.0.0",
+    "openai": "^6.1.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "tailwind-merge": "^3.3.1",

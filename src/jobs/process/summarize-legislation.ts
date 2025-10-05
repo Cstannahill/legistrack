@@ -14,12 +14,46 @@ export const summarizeBillJob = inngest.createFunction(
   },
   { event: "bill/summarize" },
   async ({ event, step }) => {
-    const { billId } = event.data;
+    const {
+      billId,
+      congress,
+      billType: payloadBillType,
+      billNumber,
+    } = event.data as {
+      billId?: string;
+      congress?: number;
+      billType?: string;
+      billNumber?: number;
+    };
+
+    if (!billId && !(congress && payloadBillType && billNumber)) {
+      throw new Error(
+        "Invalid bill/summarize payload: provide billId or congress+billType+billNumber"
+      );
+    }
 
     // Step 1: Ensure bill exists for logging context
     const bill = await step.run("fetch-bill", async () => {
+      if (billId) {
+        return await db.bill.findUnique({
+          where: { id: billId },
+          select: {
+            id: true,
+            billType: true,
+            billNumber: true,
+            title: true,
+          },
+        });
+      }
+
       return await db.bill.findUnique({
-        where: { id: billId },
+        where: {
+          congress_billType_billNumber: {
+            congress: congress!,
+            billType: payloadBillType!.toLowerCase(),
+            billNumber: billNumber!,
+          },
+        },
         select: {
           id: true,
           billType: true,
@@ -30,7 +64,11 @@ export const summarizeBillJob = inngest.createFunction(
     });
 
     if (!bill) {
-      throw new Error(`Bill not found: ${billId}`);
+      throw new Error(
+        `Bill not found: ${
+          billId ?? `${congress}-${payloadBillType}-${billNumber}`
+        }`
+      );
     }
 
     const providerEnv =
@@ -41,7 +79,7 @@ export const summarizeBillJob = inngest.createFunction(
       "generate-standard-summary",
       async () => {
         return await summarizeBillStandard({
-          billId,
+          billId: bill.id,
           aiModel: providerEnv,
           logger: (message) =>
             console.log(

@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from './StatusBadge'
 import { formatDate } from '@/lib/utils/date'
 import { truncate } from '@/lib/utils/formatting'
+import { getCategoryBySlug, type CategorySlug } from '@/lib/utils/category-helper'
 import { Calendar, User, FileText, Sparkles } from 'lucide-react'
 
 interface BillCardProps {
@@ -115,19 +116,23 @@ export function BillCard({ bill }: BillCardProps) {
 
                     {bill.categories.length > 0 && (
                         <div className="flex flex-wrap gap-1">
-                            {bill.categories.slice(0, 3).map((category) => (
-                                <Badge
-                                    key={category.id}
-                                    variant="secondary"
-                                    className="text-xs"
-                                    style={{
-                                        backgroundColor: category.color ? `${category.color}15` : undefined,
-                                        color: category.color || undefined,
-                                    }}
-                                >
-                                    {category.name}
-                                </Badge>
-                            ))}
+                            {bill.categories.slice(0, 3).map((category) => {
+                                const categoryData = getCategoryBySlug(category.slug as CategorySlug)
+                                const color = categoryData?.color
+                                return (
+                                    <Badge
+                                        key={category.id}
+                                        variant="secondary"
+                                        className="text-xs"
+                                        style={{
+                                            backgroundColor: color ? `${color}15` : undefined,
+                                            color: color || undefined,
+                                        }}
+                                    >
+                                        {category.name}
+                                    </Badge>
+                                )
+                            })}
                         </div>
                     )}
                 </CardContent>

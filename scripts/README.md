@@ -48,6 +48,25 @@ AI_MODEL=openai BATCH_SIZE=15 npm run summarize-executive-orders
 AI_MODEL=anthropic BATCH_SIZE=5 npm run summarize-executive-orders
 ```
 
+### Fetch Bill Actions (Congress.gov activity log)
+
+```bash
+# Dry run (no database writes) for a specific bill
+npm run fetch-bill-actions -- --bill 118-hr-123 --dry-run
+
+# Refresh actions for bills missing records (writes to DB)
+npm run fetch-bill-actions
+
+# Force refresh even if actions are already stored
+npm run fetch-bill-actions -- --refetch --limit 50
+```
+
+**Notes:**
+
+- Parses bill identifiers like `118-hr-123` or `s-2345` and falls back to the current Congress.
+- Stores each action with date, type, optional code, and text while updating the bill's status/date from the newest action.
+- Use the dry-run flag to inspect Congress.gov results before writing to the database.
+
 **Key Features:**
 
 - ✅ **Only generates STANDARD summaries** (saves 2/3 of API costs)
@@ -312,6 +331,10 @@ FETCH_TEXT=true TOTAL_BILLS=100 npm run fetch-bills-paginated
 - `TOTAL_BILLS` - Total number of bills to fetch (default: 1000)
 - `FETCH_TEXT` - Fetch full text (default: **false**, for speed)
 - `FETCH_COMPANIONS` - Link companion bills (default: true)
+- `START_DATE` / `END_DATE` - ISO date strings (or `YYYY-MM-DD`) to restrict the window
+- `LOOKBACK_DAYS` - Alternative to dates; pull the trailing N days ending at `END_DATE` (or today)
+
+  > Congress.gov only accepts timestamps in `YYYY-MM-DDTHH:MM:SSZ` format—no milliseconds. The script automatically normalizes values, but ensure custom inputs include the trailing `Z` or use simple dates (we'll coerce to midnight UTC).
 
 **What it does:**
 
@@ -353,7 +376,7 @@ FETCH_TEXT=true TOTAL_BILLS=100 npm run fetch-bills-paginated
 💡 Tip: Run 'npm run summarize-bills' to fetch text + generate AI summaries!
 ```
 
-**⚠️ IMPORTANT:** The Congress.gov API list endpoint does NOT include `introducedDate` or text URLs. This script uses `updateDate` as a fallback. Accurate dates and full text are fetched during summarization.
+**⚠️ IMPORTANT:** The Congress.gov API list endpoint does NOT include `introducedDate` or text URLs. This script uses `updateDate` as a fallback when creating new records but avoids overwriting enriched fields already populated by the summarization workflow.
 
 ---
 

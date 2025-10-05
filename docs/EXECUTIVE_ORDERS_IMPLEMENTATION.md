@@ -664,3 +664,50 @@ npm run fetch-executive-orders
 ```
 
 🎉 **Implementation complete!**
+
+---
+
+## Database Listing Function (Added)
+
+### `get_executive_orders` (Parameterized)
+
+The application now uses a parameterized SQL function for executive order list pages, mirroring the bill listing approach for performance and consistency.
+
+```
+get_executive_orders(
+  offset_val INT DEFAULT 0,
+  limit_val INT DEFAULT 50,
+  p_category_slug TEXT DEFAULT NULL,
+  p_president_name TEXT DEFAULT NULL,
+  p_search TEXT DEFAULT NULL,
+  p_signing_start DATE DEFAULT NULL,
+  p_signing_end DATE DEFAULT NULL,
+  p_sort_field TEXT DEFAULT 'signingDate',      -- allowed: signingDate | publicationDate | updatedAt
+  p_sort_dir TEXT DEFAULT 'desc'                -- allowed: asc | desc
+)
+RETURNS (id, kind, billType, billNumber, congress, title, currentStatus, sort_date, presidentName, categories, sponsor, total_count)
+```
+
+#### Behavior
+
+- Filters are optional; NULL means "do not filter".
+- Only returns executive orders that have `fullText` and at least one non-null `Summary.content` (parity with bill listing completeness constraint).
+- `sort_date` is derived dynamically with a precedence fallback: chosen field → `signingDate`.
+- Deterministic ordering: primary sort date (NULLS LAST) → kind → stable id.
+- `total_count` uses a window function over the filtered set (no separate COUNT query needed).
+
+#### Mapping in UI
+
+The list page (`bills/page.tsx`) now always calls this function for EXECUTIVE_ORDERS view. Prisma fallback for EO lists was removed, reducing divergent code paths.
+
+#### Future Alignment
+
+`get_bills_and_orders` will be parameterized next to unify ALL view filtering without app-layer merging.
+
+#### Indexes Leveraged
+
+- `eo_signingDate_id_idx`, `eo_publicationDate_id_idx`, `eo_updatedAt_id_idx`
+- Trigram indexes: `eo_title_trgm_idx`, `eo_president_trgm_idx`
+- Category bridge index: `eo_category_bridge_idx`
+
+---
