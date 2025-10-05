@@ -83,7 +83,7 @@ BEGIN
         AND ($3::TEXT IS NULL OR e.title ILIKE '%%' || $3 || '%%')
         AND ($4::DATE IS NULL OR e."signingDate" >= $4)
         AND ($5::DATE IS NULL OR e."signingDate" <= $5)
-    )\n
+    )
     SELECT
       f.id,
       f.kind,
