@@ -2,14 +2,11 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ArrowRight, BookOpen, Bell, Search, TrendingUp, Star } from 'lucide-react'
-import { getLegislationCompletenessCounts } from '@/lib/stats'
+import { get_count_complete_legislation } from '@/lib/stats'
 
 export default async function HomePage() {
-  const counts = await getLegislationCompletenessCounts()
+  const complete = await get_count_complete_legislation()
 
-  const totalNumber = counts.total
-  const complete = counts.complete
-  const pctComplete = totalNumber === 0 ? 0 : Math.round((complete / totalNumber) * 1000) / 10
 
   return (
     <div className="flex flex-col">
@@ -49,10 +46,7 @@ export default async function HomePage() {
                   <div className="text-3xl font-bold">{complete.toLocaleString()}</div>
                 </div>
               </div>
-              <div className="text-left">
-                <div className="font-medium">Complete: <span className="font-bold">{complete.toLocaleString()}</span> <span className="text-sm text-muted-foreground">({pctComplete}%)</span></div>
-                <div className="text-sm text-muted-foreground">Includes bills and executive orders with full text, a summary, and tags.</div>
-              </div>
+
             </div>
           </div>
         </div>

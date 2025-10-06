@@ -72,3 +72,30 @@ export async function getLegislationCompletenessCounts() {
     complete,
   };
 }
+
+// Lightweight helper that returns just the total number of "complete" pieces of legislation (Bills + Executive Orders)
+// A piece is considered complete if it has: fullText (not null), at least one STANDARD summary, and at least one category.
+// Mirrors the logic used in getLegislationCompletenessCounts but avoids computing intermediate counts.
+export async function get_count_complete_legislation(): Promise<number> {
+  const [billsComplete, eosComplete] = await Promise.all([
+    db.bill.count({
+      where: {
+        AND: [
+          { fullText: { not: null } },
+          { summaries: { some: { summaryType: "STANDARD" } } },
+          { categories: { some: {} } },
+        ],
+      },
+    }),
+    db.executiveOrder.count({
+      where: {
+        AND: [
+          { fullText: { not: null } },
+          { summaries: { some: { summaryType: "STANDARD" } } },
+          { categories: { some: {} } },
+        ],
+      },
+    }),
+  ]);
+  return billsComplete + eosComplete;
+}
