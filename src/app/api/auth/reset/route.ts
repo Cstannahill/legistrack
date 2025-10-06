@@ -34,5 +34,14 @@ export async function POST(req: Request) {
 
   // Sign a fresh auth token so the user is logged in after reset
   const authToken = signToken({ userId: user.id });
-  return NextResponse.json({ authToken, userId: user.id });
+  const res = NextResponse.json({ userId: user.id });
+  const maxAge = 60 * 60 * 24 * 7;
+  const isSecure = process.env.NODE_ENV === "production";
+  res.headers.set(
+    "Set-Cookie",
+    `legistrack_token=${authToken}; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=Lax${
+      isSecure ? "; Secure" : ""
+    }`
+  );
+  return res;
 }

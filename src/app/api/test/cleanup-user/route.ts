@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUserFromHeader } from "../../../../lib/server";
+import { getCurrentUser } from "../../../../lib/server";
 import { db } from "../../../../lib/db";
 
 // Dev-only route to delete the currently authenticated user. Only allowed in non-production.
@@ -8,8 +8,9 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "Not allowed" }, { status: 403 });
   }
 
-  const user = await getCurrentUserFromHeader(
-    req.headers.get("authorization") ?? undefined
+  const user = await getCurrentUser(
+    req.headers.get("authorization") ?? undefined,
+    req.headers.get("cookie") ?? undefined
   );
   if (!user)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

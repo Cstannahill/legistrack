@@ -39,12 +39,19 @@ export async function POST(req: Request) {
     });
 
     const token = signToken({ userId: user.id });
-
-    return NextResponse.json({
+    const res = NextResponse.json({
       userId: user.id,
       message: "Registration successful",
-      authToken: token,
     });
+    const maxAge = 60 * 60 * 24 * 7;
+    const isSecure = process.env.NODE_ENV === "production";
+    res.headers.set(
+      "Set-Cookie",
+      `legistrack_token=${token}; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=Lax${
+        isSecure ? "; Secure" : ""
+      }`
+    );
+    return res;
   } catch (err) {
     const msg =
       err && typeof err === "object" && "message" in err

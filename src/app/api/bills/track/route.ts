@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "../../../../lib/db";
-import { getCurrentUserFromHeader } from "../../../../lib/server";
+import { getCurrentUser } from "../../../../lib/server";
 
 export async function POST(req: Request) {
-  const user = await getCurrentUserFromHeader(
-    req.headers.get("authorization") ?? undefined
+  const user = await getCurrentUser(
+    req.headers.get("authorization") ?? undefined,
+    req.headers.get("cookie") ?? undefined
   );
   if (!user)
     return NextResponse.json(
