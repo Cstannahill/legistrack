@@ -1,0 +1,23 @@
+CREATE OR REPLACE FUNCTION public.get_count_complete_legislation()
+RETURNS TABLE(total_count bigint)
+LANGUAGE sql
+AS $$
+  SELECT
+    (
+      SELECT COUNT(1)
+      FROM public."Bill" b
+      WHERE b."fullText" IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM public."Summary" s WHERE s."billId" = b.id
+        )
+    )
+    +
+    (
+      SELECT COUNT(1)
+      FROM public."ExecutiveOrder" eo
+      WHERE eo."fullText" IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM public."Summary" s WHERE s."executiveOrderId" = eo.id
+        )
+    )::bigint AS total_count;
+$$;
