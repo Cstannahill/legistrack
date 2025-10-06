@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowRight, BookOpen, Bell, Search, TrendingUp, Star } from 'lucide-react'
+import { ArrowRight, BookOpen, Bell, Search, TrendingUp, BookText } from 'lucide-react'
 import { get_count_complete_legislation } from '@/lib/stats'
 
 export default async function HomePage() {
@@ -40,7 +40,7 @@ export default async function HomePage() {
             {/* Big stat */}
             <div className="mt-8 flex items-center gap-6">
               <div className="flex items-center rounded-lg bg-gradient-to-r from-primary to-indigo-600 px-6 py-4 text-white shadow-lg">
-                <Star className="mr-4 h-8 w-8" />
+                <BookText className="mr-4 h-8 w-8" />
                 <div className="text-left">
                   <div className="text-sm">Pieces of Legislation Summarized</div>
                   <div className="text-3xl font-bold">{complete.toLocaleString()}</div>

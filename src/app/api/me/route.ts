@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getCurrentUserFromHeader } from "../../../lib/server";
+import { getCurrentUser } from "../../../lib/server";
 
 export async function GET(req: Request) {
   const auth = req.headers.get("authorization") ?? undefined;
-  const user = await getCurrentUserFromHeader(auth);
+  const cookie = req.headers.get("cookie") ?? undefined;
+  const user = await getCurrentUser(auth, cookie);
   if (!user) {
     return NextResponse.json({ user: null }, { status: 200 });
   }

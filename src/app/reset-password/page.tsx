@@ -26,7 +26,8 @@ function ResetPasswordInner() {
             const res = await fetch('/api/auth/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, newPassword: password }) })
             const body = await res.json()
             if (!res.ok) throw new Error(body?.error || 'Reset failed')
-            localStorage.setItem('authToken', body.authToken)
+            // server set the auth cookie; notify listeners to re-check auth
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('authChanged'))
             router.push('/')
         } catch (err: unknown) {
             const msg = err && typeof err === 'object' && 'message' in err ? (err as { message?: string }).message : String(err)

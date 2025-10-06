@@ -10,24 +10,54 @@ export function useAuth() {
     const router = useRouter()
 
     useEffect(() => {
-        const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null
-        if (!token) {
-            setUser(null)
-            setLoading(false)
-            return
-        }
-        fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } })
-            .then((r) => r.json())
-            .then((data) => {
+        let mounted = true
+
+        async function load() {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('authToken') : null
+            if (!token) {
+                if (!mounted) return
+                setUser(null)
+                setLoading(false)
+                return
+            }
+            try {
+                const r = await fetch('/api/me', { headers: { Authorization: `Bearer ${token}` } })
+                const data = await r.json()
+                if (!mounted) return
                 setUser(data?.user ?? null)
-            })
-            .catch(() => setUser(null))
-            .finally(() => setLoading(false))
+            } catch {
+                if (!mounted) return
+                setUser(null)
+            } finally {
+                if (!mounted) return
+                setLoading(false)
+            }
+        }
+
+        load()
+
+        // Listen for cross-tab storage events and in-page auth changes
+        function onStorage(e: StorageEvent) {
+            if (e.key === 'authToken') load()
+        }
+        function onAuthChanged() {
+            load()
+        }
+        window.addEventListener('storage', onStorage)
+        window.addEventListener('authChanged', onAuthChanged)
+
+        return () => {
+            mounted = false
+            window.removeEventListener('storage', onStorage)
+            window.removeEventListener('authChanged', onAuthChanged)
+        }
     }, [])
 
     function logout() {
         if (typeof window !== 'undefined') {
-            localStorage.removeItem('authToken')
+            // Ask server to clear HttpOnly cookie, then notify listeners
+            fetch('/api/logout', { method: 'POST' }).catch(() => { })
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event('authChanged'))
             router.push('/')
             setUser(null)
         }
