@@ -1,9 +1,15 @@
+"use client"
 // Header Navigation Component
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
-import { Scale } from 'lucide-react'
+import { Scale, Bell, User as UserIcon, LogOut } from 'lucide-react'
+import { useAuth } from '@/lib/useAuth'
+import { useState } from 'react'
 
 export function Header() {
+    const { user, loading, logout } = useAuth()
+    const [open, setOpen] = useState(false)
+
     return (
         <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
             <div className="container flex h-16 items-center">
@@ -21,11 +27,41 @@ export function Header() {
                     </Link>
                 </nav>
 
-                {/* <div className="ml-auto flex items-center gap-4">
-                    <Button variant="outline" size="sm">
-                        Sign In
-                    </Button>
-                </div> */}
+                <div className="ml-auto flex items-center gap-4">
+                    {/* Notification bell - visible always so users who opt-out of email still see in-app notices */}
+                    <Link href="/notifications" className="text-muted-foreground hover:text-foreground">
+                        <Bell className="h-5 w-5" />
+                    </Link>
+
+                    {!loading && !user && (
+                        <div className="flex items-center gap-2">
+                            <Link href="/login">
+                                <Button variant="ghost" size="sm">Login</Button>
+                            </Link>
+                            <Link href="/register">
+                                <Button size="sm">Register</Button>
+                            </Link>
+                        </div>
+                    )}
+
+                    {!loading && user && (
+                        <div className="relative">
+                            <button onClick={() => setOpen((s) => !s)} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-muted">
+                                <UserIcon className="h-5 w-5" />
+                                <span className="text-sm">{user.name ?? user.username ?? user.email}</span>
+                            </button>
+                            {open && (
+                                <div className="absolute right-0 mt-2 w-48 rounded border bg-card p-2 shadow">
+                                    <Link href="/settings" className="block px-2 py-1 text-sm hover:bg-muted">Settings</Link>
+                                    <button onClick={logout} className="mt-2 flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted">
+                                        <LogOut className="h-4 w-4" />
+                                        Logout
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
         </header>
     )

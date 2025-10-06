@@ -36,6 +36,8 @@ model Bill {
   votes          Vote[]
   categories     Category[]      @relation("BillCategories")
   cosponsors     Member[]        @relation("Cosponsored")
+  // Relations
+  trackings      BillTracking[]
 
   @@unique([congress, billType, billNumber])
   @@index([billType, billNumber])
@@ -217,12 +219,62 @@ model Action {
 model User {
   id                      String         @id @default(cuid())
   email                   String         @unique
+  username                String?        @unique
+  passwordHash            String?
   name                    String?
   emailVerified           Boolean        @default(false)
   notificationPreferences Json?
   createdAt               DateTime       @default(now())
   updatedAt               DateTime       @updatedAt
   subscriptions           Subscription[]
+  // Relations
+  notificationPreference  NotificationPreference?
+  billTrackings           BillTracking[]
+  notifications           Notification[]
+}
+
+model NotificationPreference {
+  id                   String  @id @default(cuid())
+  userId               String  @unique
+  notifyOnStatusChange Boolean @default(true)
+  notifyOnAllActions   Boolean @default(false)
+  emailNotifications   Boolean @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model BillTracking {
+  id        String   @id @default(cuid())
+  userId    String
+  billId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, billId])
+  @@index([userId])
+  @@index([billId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  data      Json?
+  read      Boolean  @default(false)
+  viaEmail   Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([createdAt])
 }
 
 model Subscription {

@@ -64,7 +64,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                 </div>
             </div>
 
-            {/* Show Incomplete Bills Toggle - Only for bills */}
+            {/* Show Incomplete Bills Toggle - Only for bills
             {currentType !== 'EXECUTIVE_ORDERS' && (
                 <div className="rounded-lg border bg-muted/50 p-4">
                     <div className="flex items-center justify-between">
@@ -85,7 +85,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                         />
                     </div>
                 </div>
-            )}
+            )} */}
 
             {/* Type Filter */}
             {/* <div>
