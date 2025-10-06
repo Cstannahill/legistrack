@@ -134,14 +134,14 @@ END $$;
 -- 5. Prepare for unique username (dedupe)
 -- Strategy: For any duplicates (case-insensitive), append incremental suffixes before creating unique index.
 WITH ranked AS (
-  SELECT id, username, ROW_NUMBER() OVER (PARTITION BY LOWER(username) ORDER BY createdAt, id) AS rn
+  SELECT "id", "username", ROW_NUMBER() OVER (PARTITION BY LOWER("username") ORDER BY "createdAt", "id") AS rn
   FROM "User"
-  WHERE username IS NOT NULL
+  WHERE "username" IS NOT NULL
 )
 UPDATE "User" u
-SET username = username || '_' || (rn - 1)
+SET "username" = u."username" || '_' || (r.rn - 1)
 FROM ranked r
-WHERE u.id = r.id AND r.rn > 1;
+WHERE u."id" = r."id" AND r.rn > 1;
 
 -- 6. Create unique index for username if not exists (Prisma expects constraint name pattern) 
 DO $$ BEGIN

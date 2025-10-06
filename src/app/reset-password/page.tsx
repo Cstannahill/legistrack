@@ -1,8 +1,9 @@
 "use client"
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 
-export default function ResetPasswordPage() {
+// Child component that reads search params. Must be inside Suspense per Next.js guidance.
+function ResetPasswordInner() {
     const params = useSearchParams()
     const token = params.get('token') ?? ''
     const router = useRouter()
@@ -36,24 +37,32 @@ export default function ResetPasswordPage() {
     }
 
     return (
+        <div className="w-full max-w-md rounded-lg border bg-white p-8 shadow-md">
+            <h1 className="mb-4 text-2xl font-semibold">Reset password</h1>
+            <form onSubmit={submit} className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium">New password</label>
+                    <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="mt-2 w-full rounded border px-4 py-3" />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium">Confirm password</label>
+                    <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="mt-2 w-full rounded border px-4 py-3" />
+                </div>
+                {error && <div className="text-sm text-destructive">{error}</div>}
+                <div className="flex justify-end">
+                    <button disabled={loading} className="rounded bg-primary px-4 py-2 text-white">{loading ? 'Updating...' : 'Update password'}</button>
+                </div>
+            </form>
+        </div>
+    )
+}
+
+export default function ResetPasswordPage() {
+    return (
         <div className="min-h-[70vh] flex items-center justify-center py-12">
-            <div className="w-full max-w-md rounded-lg border bg-white p-8 shadow-md">
-                <h1 className="mb-4 text-2xl font-semibold">Reset password</h1>
-                <form onSubmit={submit} className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium">New password</label>
-                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="mt-2 w-full rounded border px-4 py-3" />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium">Confirm password</label>
-                        <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="mt-2 w-full rounded border px-4 py-3" />
-                    </div>
-                    {error && <div className="text-sm text-destructive">{error}</div>}
-                    <div className="flex justify-end">
-                        <button disabled={loading} className="rounded bg-primary px-4 py-2 text-white">{loading ? 'Updating...' : 'Update password'}</button>
-                    </div>
-                </form>
-            </div>
+            <Suspense fallback={<div className="text-center text-sm text-muted-foreground">Loading...</div>}>
+                <ResetPasswordInner />
+            </Suspense>
         </div>
     )
 }
