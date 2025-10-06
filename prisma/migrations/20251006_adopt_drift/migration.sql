@@ -13,31 +13,34 @@ ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "passwordHash" TEXT;
 
 -- 2. Create supporting tables if missing (no-op if they already exist)
 CREATE TABLE IF NOT EXISTS "NotificationPreference" (
-    "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
-    "userId" TEXT UNIQUE NOT NULL,
-    "notifyOnStatusChange" BOOLEAN NOT NULL DEFAULT true,
-    "notifyOnAllActions" BOOLEAN NOT NULL DEFAULT false,
-    "emailNotifications" BOOLEAN NOT NULL DEFAULT false,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  "id" TEXT NOT NULL,
+  "userId" TEXT UNIQUE NOT NULL,
+  "notifyOnStatusChange" BOOLEAN NOT NULL DEFAULT true,
+  "notifyOnAllActions" BOOLEAN NOT NULL DEFAULT false,
+  "emailNotifications" BOOLEAN NOT NULL DEFAULT false,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
+  CONSTRAINT "NotificationPreference_pkey" PRIMARY KEY ("id")
 );
 
 CREATE TABLE IF NOT EXISTS "BillTracking" (
-    "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
-    "userId" TEXT NOT NULL,
-    "billId" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  "id" TEXT NOT NULL,
+  "userId" TEXT NOT NULL,
+  "billId" TEXT NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "BillTracking_pkey" PRIMARY KEY ("id")
 );
 
 CREATE TABLE IF NOT EXISTS "Notification" (
-    "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
-    "userId" TEXT NOT NULL,
-    "title" TEXT NOT NULL,
-    "message" TEXT NOT NULL,
-    "data" JSONB,
-    "read" BOOLEAN NOT NULL DEFAULT false,
-    "viaEmail" BOOLEAN NOT NULL DEFAULT false,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  "id" TEXT NOT NULL,
+  "userId" TEXT NOT NULL,
+  "title" TEXT NOT NULL,
+  "message" TEXT NOT NULL,
+  "data" JSONB,
+  "read" BOOLEAN NOT NULL DEFAULT false,
+  "viaEmail" BOOLEAN NOT NULL DEFAULT false,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "Notification_pkey" PRIMARY KEY ("id")
 );
 
 -- 3. Indices (use DO blocks for unique constraints)
@@ -106,10 +109,27 @@ DO $$ BEGIN
 END $$;
 
 -- 4. Foreign keys (add if not present)
-ALTER TABLE "NotificationPreference" ADD CONSTRAINT IF NOT EXISTS "NotificationPreference_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "BillTracking" ADD CONSTRAINT IF NOT EXISTS "BillTracking_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "BillTracking" ADD CONSTRAINT IF NOT EXISTS "BillTracking_billId_fkey" FOREIGN KEY ("billId") REFERENCES "Bill"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "Notification" ADD CONSTRAINT IF NOT EXISTS "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- Foreign key constraints (idempotent via DO blocks)
+DO $$ BEGIN
+  BEGIN
+    ALTER TABLE "NotificationPreference" ADD CONSTRAINT "NotificationPreference_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  EXCEPTION WHEN duplicate_object THEN NULL; END;
+END $$;
+DO $$ BEGIN
+  BEGIN
+    ALTER TABLE "BillTracking" ADD CONSTRAINT "BillTracking_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  EXCEPTION WHEN duplicate_object THEN NULL; END;
+END $$;
+DO $$ BEGIN
+  BEGIN
+    ALTER TABLE "BillTracking" ADD CONSTRAINT "BillTracking_billId_fkey" FOREIGN KEY ("billId") REFERENCES "Bill"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  EXCEPTION WHEN duplicate_object THEN NULL; END;
+END $$;
+DO $$ BEGIN
+  BEGIN
+    ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  EXCEPTION WHEN duplicate_object THEN NULL; END;
+END $$;
 
 -- 5. Prepare for unique username (dedupe)
 -- Strategy: For any duplicates (case-insensitive), append incremental suffixes before creating unique index.
