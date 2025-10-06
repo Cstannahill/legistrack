@@ -77,25 +77,18 @@ export async function getLegislationCompletenessCounts() {
 // A piece is considered complete if it has: fullText (not null), at least one STANDARD summary, and at least one category.
 // Mirrors the logic used in getLegislationCompletenessCounts but avoids computing intermediate counts.
 export async function get_count_complete_legislation(): Promise<number> {
-  const [billsComplete, eosComplete] = await Promise.all([
-    db.bill.count({
-      where: {
-        AND: [
-          { fullText: { not: null } },
-          { summaries: { some: { summaryType: "STANDARD" } } },
-          { categories: { some: {} } },
-        ],
-      },
-    }),
-    db.executiveOrder.count({
-      where: {
-        AND: [
-          { fullText: { not: null } },
-          { summaries: { some: { summaryType: "STANDARD" } } },
-          { categories: { some: {} } },
-        ],
-      },
-    }),
-  ]);
-  return billsComplete + eosComplete;
+  // Single authoritative source: SQL function get_bills_and_orders
+  // We ask for 1 row (limit 1) and read window total_count
+  // Parameter list (as defined): (offset, limit, p_bill_status, p_bill_category_slug, p_bill_congress, p_bill_search,
+  //   p_eo_category_slug, p_eo_president_name, p_eo_search, p_eo_signing_start, p_eo_signing_end, p_sort_field, p_sort_dir)
+  interface CountRow {
+    total_count: number | string | bigint;
+  }
+  const rows = await db.$queryRawUnsafe<CountRow[]>(
+    `SELECT total_count FROM get_bills_and_orders($1::int,$2::int, NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'introducedDate','desc') LIMIT 1`,
+    0,
+    1
+  );
+  if (!rows.length) return 0;
+  return Number(rows[0].total_count) || 0;
 }
