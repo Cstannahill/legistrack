@@ -13,8 +13,17 @@ const db = new PrismaClient();
 
 // Configuration from environment variables
 const FETCH_TEXT = process.env.FETCH_TEXT === "true"; // Default false for speed
-const LIMIT = parseInt(process.env.LIMIT || "100");
+const LIMIT = parseInt(process.env.LIMIT || "10000");
 const FETCH_ALL_TYPES = process.env.FETCH_ALL_TYPES === "true"; // Default false (only executive orders)
+// Optional: start at a specific page offset (0-based). Set PAGE_OFFSET or OFFSET.
+const PAGE_OFFSET = (() => {
+  const raw = process.env.PAGE_OFFSET ?? process.env.OFFSET ?? "0";
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`Invalid PAGE_OFFSET/OFFSET provided: '${raw}'`);
+  }
+  return parsed;
+})();
 
 // Map Federal Register subtype to our enum
 // Note: API detail view uses "subtype" field (e.g., "Executive Order")
@@ -119,7 +128,15 @@ async function main() {
 
     // Fetch documents from Federal Register
     console.log(`📥 Fetching ${LIMIT} documents...`);
+    if (PAGE_OFFSET > 0) {
+      console.log(
+        `➡️  Starting at page offset: ${PAGE_OFFSET} (API page ${
+          PAGE_OFFSET + 1
+        })`
+      );
+    }
     const documents: FederalRegisterDocument[] = await fetchFromAPI({
+      page: PAGE_OFFSET + 1,
       perPage: Math.min(LIMIT, 1000), // API max is 1000
       conditions,
     });

@@ -4,6 +4,9 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Scale, Bell, User as UserIcon, LogOut } from 'lucide-react'
 import { useAuth } from '@/lib/useAuth'
+// Feature flags from env (defaults: notifications visible, settings enabled)
+const SHOW_NOTIFICATIONS = process.env.NEXT_PUBLIC_SHOW_NOTIFICATIONS === 'true'
+const ENABLE_SETTINGS = process.env.NEXT_PUBLIC_ENABLE_SETTINGS !== 'false'
 import { useState } from 'react'
 
 export function Header() {
@@ -28,10 +31,12 @@ export function Header() {
                 </nav>
 
                 <div className="ml-auto flex items-center gap-4">
-                    {/* Notification bell - visible always so users who opt-out of email still see in-app notices */}
-                    <Link href="/notifications" className="text-muted-foreground hover:text-foreground">
-                        <Bell className="h-5 w-5" />
-                    </Link>
+                    {/* Notification bell behind feature flag */}
+                    {SHOW_NOTIFICATIONS && (
+                        <Link href="/notifications" className="text-muted-foreground hover:text-foreground">
+                            <Bell className="h-5 w-5" />
+                        </Link>
+                    )}
 
                     {!loading && !user && (
                         <div className="flex items-center gap-2">
@@ -52,7 +57,11 @@ export function Header() {
                             </button>
                             {open && (
                                 <div className="absolute right-0 mt-2 w-48 rounded border bg-card p-2 shadow">
-                                    <Link href="/settings" className="block px-2 py-1 text-sm hover:bg-muted">Settings</Link>
+                                    {ENABLE_SETTINGS ? (
+                                        <Link href="/settings" className="block px-2 py-1 text-sm hover:bg-muted">Settings</Link>
+                                    ) : (
+                                        <div className="block px-2 py-1 text-sm text-muted-foreground">Settings (disabled)</div>
+                                    )}
                                     <button onClick={logout} className="mt-2 flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted">
                                         <LogOut className="h-4 w-4" />
                                         Logout

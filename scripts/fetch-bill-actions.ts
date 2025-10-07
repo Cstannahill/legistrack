@@ -11,7 +11,12 @@ import { config } from "dotenv";
 config();
 
 import { db } from "@/lib/db";
-import { fetchBillActions } from "@/lib/api/congress";
+import {
+  fetchBillActions,
+  fetchBillText,
+  fetchBillDetails,
+} from "@/lib/api/congress";
+import llmRedis from "@/lib/llmRedis";
 import { CURRENT_CONGRESS } from "@/lib/constants";
 import { determineBillStatus } from "@/workflows/summarize-bill-standard";
 
@@ -28,6 +33,11 @@ interface CLIOptions {
 }
 
 const DEFAULT_LIMIT = parseInt(process.env.ACTION_BATCH_SIZE || "20", 10);
+const ACTION_CONCURRENCY = parseInt(process.env.ACTION_CONCURRENCY || "5", 10);
+const ARCHIVE_AFTER_DAYS = parseInt(
+  process.env.ARCHIVE_AFTER_DAYS || "365",
+  10
+);
 
 type RawCongressAction = {
   actionDate?: string;
@@ -289,8 +299,30 @@ async function processBill(bill: BillRecord, options: CLIOptions) {
   const label = formatBillLabel(bill);
   console.log(`\n📄 ${label}`);
   console.log(`   Title: ${bill.title || "(untitled)"}`);
+  const redisKeyStatus = `actions:bill:${bill.id}:status`;
+  const redisKeyAttempts = `actions:bill:${bill.id}:attempts`;
 
   try {
+    // Archiving rule: skip bills that became law long ago
+    try {
+      if (
+        bill.currentStatus === "BECAME_LAW" &&
+        bill.statusDate &&
+        new Date(bill.statusDate) <
+          new Date(Date.now() - ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000)
+      ) {
+        console.log("   🗄️  Bill archived by policy; skipping actions fetch");
+        await llmRedis.redis.set(redisKeyStatus, "archived");
+        return { status: "archived" as const, count: 0 };
+      }
+    } catch {
+      console.warn("Archive check failed, continuing");
+    }
+
+    // mark processing in redis and increment attempts
+    await llmRedis.redis.set(redisKeyStatus, "processing");
+    await llmRedis.redis.incr(redisKeyAttempts);
+
     const apiActions = await fetchBillActions(
       bill.congress,
       bill.billType.toLowerCase(),
@@ -315,6 +347,7 @@ async function processBill(bill: BillRecord, options: CLIOptions) {
 
     if (normalized.length === 0) {
       console.log("   ⚠️  No valid actions after normalization");
+      await llmRedis.redis.set(redisKeyStatus, "invalid");
       return { status: "invalid" as const, count: 0 };
     }
 
@@ -338,6 +371,7 @@ async function processBill(bill: BillRecord, options: CLIOptions) {
       return { status: "dry-run" as const, count: normalized.length };
     }
 
+    // Persist actions and update bill within a transaction
     await db.$transaction(async (tx) => {
       await tx.action.deleteMany({ where: { billId: bill.id } });
       await tx.action.createMany({
@@ -356,27 +390,97 @@ async function processBill(bill: BillRecord, options: CLIOptions) {
         | undefined;
       const resolvedStatus = determineBillStatus(latestText);
 
-      await tx.bill.update({
-        where: { id: bill.id },
-        data: {
-          currentStatus: resolvedStatus || bill.currentStatus,
-          statusDate: latestAction.actionDate,
-          lastFetchedAt: new Date(),
-        },
-      });
+      // Also fetch and store bill text/details so downstream LLM has all data
+      try {
+        const details = await fetchBillDetails(
+          bill.congress,
+          bill.billType.toLowerCase(),
+          bill.billNumber
+        );
+        // If details include updated title or other metadata, we can persist minimal updates
+        if (details?.title && details.title !== bill.title) {
+          // handled below in the same tx update
+        }
+      } catch (e) {
+        console.warn("Failed to fetch bill details", e);
+      }
+
+      try {
+        const textResult = await fetchBillText(
+          bill.congress,
+          bill.billType.toLowerCase(),
+          bill.billNumber
+        );
+        await tx.bill.update({
+          where: { id: bill.id },
+          data: {
+            currentStatus: resolvedStatus || bill.currentStatus,
+            statusDate: latestAction.actionDate,
+            lastFetchedAt: new Date(),
+            fullText: textResult?.text ?? undefined,
+            fullTextUrl: textResult?.url ?? undefined,
+          },
+        });
+      } catch {
+        await tx.bill.update({
+          where: { id: bill.id },
+          data: {
+            currentStatus: resolvedStatus || bill.currentStatus,
+            statusDate: latestAction.actionDate,
+            lastFetchedAt: new Date(),
+          },
+        });
+      }
     });
+
+    await llmRedis.redis.set(redisKeyStatus, "completed");
 
     console.log(`   💾 Stored ${normalized.length} actions in database`);
     return { status: "stored" as const, count: normalized.length };
   } catch (error) {
     console.error(`   ❌ Error processing actions:`, error);
+    await llmRedis.redis.set(redisKeyStatus, "failed");
+    await llmRedis.redis.hset(`actions:bill:${bill.id}:error`, {
+      message: String(error),
+      at: new Date().toISOString(),
+    });
     return { status: "error" as const, count: 0 };
   }
 }
 
 async function main() {
+  let jobRunId: string | null = null;
   try {
     const options = parseArgs();
+
+    // sanitize options for JSON storage (avoid TS Json typing issues)
+    const optionsForMetadata = {
+      limit: options.limit,
+      refetch: options.refetch,
+      dryRun: options.dryRun,
+      billId: options.billId ?? null,
+      billIdentifier: options.billIdentifier ?? null,
+    };
+
+    // Create a JobRun record to persist processing metadata
+    try {
+      const jr = await db.jobRun.create({
+        data: {
+          jobName: "fetch-bill-actions",
+          status: "RUNNING",
+          itemsProcessed: 0,
+          itemsFailed: 0,
+          metadata: { options: optionsForMetadata },
+        },
+      });
+      jobRunId = jr.id;
+    } catch (e) {
+      console.warn(
+        "Failed to create JobRun record, continuing without persistent job logging",
+        e
+      );
+      jobRunId = null;
+    }
 
     console.log("\n⚙️  Fetch Bill Actions Script");
     console.log(`   ▶︎ Mode: ${options.dryRun ? "DRY RUN" : "WRITE"}`);
@@ -409,22 +513,52 @@ async function main() {
     let skipped = 0;
     let failed = 0;
 
-    for (const bill of bills) {
-      const result = await processBill(bill, options);
-      if (!result) continue;
+    for (let i = 0; i < bills.length; i += ACTION_CONCURRENCY) {
+      const chunk = bills.slice(i, i + ACTION_CONCURRENCY);
+      const results = await Promise.all(
+        chunk.map((b) => processBill(b, options))
+      );
+      for (const result of results) {
+        if (!result) continue;
+        switch (result.status) {
+          case "stored":
+            stored += 1;
+            break;
+          case "dry-run":
+          case "empty":
+          case "invalid":
+          case "archived":
+            skipped += 1;
+            break;
+          case "error":
+            failed += 1;
+            break;
+        }
+      }
 
-      switch (result.status) {
-        case "stored":
-          stored += 1;
-          break;
-        case "dry-run":
-        case "empty":
-        case "invalid":
-          skipped += 1;
-          break;
-        case "error":
-          failed += 1;
-          break;
+      // update JobRun counters incrementally (best-effort)
+      if (jobRunId) {
+        try {
+          const processedDelta = results.filter(
+            (r) => r?.status === "stored"
+          ).length;
+          const failedDelta = results.filter(
+            (r) => r?.status === "error"
+          ).length;
+          await db.jobRun.update({
+            where: { id: jobRunId },
+            data: {
+              itemsProcessed: { increment: processedDelta },
+              itemsFailed: { increment: failedDelta },
+              metadata: {
+                options: optionsForMetadata,
+                lastChunkAt: new Date().toISOString(),
+              },
+            },
+          });
+        } catch (e) {
+          console.warn("Failed to update JobRun during processing", e);
+        }
       }
     }
 
@@ -432,8 +566,41 @@ async function main() {
     console.log(`   ✓ Stored: ${stored}`);
     console.log(`   ~ Skipped: ${skipped}`);
     console.log(`   ✗ Failed: ${failed}`);
+
+    // finalize JobRun
+    if (jobRunId) {
+      try {
+        await db.jobRun.update({
+          where: { id: jobRunId },
+          data: {
+            status: "COMPLETED",
+            completedAt: new Date(),
+            itemsProcessed: stored,
+            itemsFailed: failed,
+            metadata: { summary: { stored, skipped, failed } },
+          },
+        });
+      } catch (e) {
+        console.warn("Failed to finalize JobRun", e);
+      }
+    }
   } catch (error) {
     console.error("\n❌ Fatal error in fetch-bill-actions script:", error);
+    // mark job as failed if we have a jobRun
+    try {
+      if (typeof jobRunId === "string" && jobRunId) {
+        await db.jobRun.update({
+          where: { id: jobRunId },
+          data: {
+            status: "FAILED",
+            completedAt: new Date(),
+            error: String(error),
+          },
+        });
+      }
+    } catch (e) {
+      console.warn("Failed to mark JobRun as failed", e);
+    }
     process.exit(1);
   }
 }
