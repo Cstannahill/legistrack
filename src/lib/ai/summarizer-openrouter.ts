@@ -111,7 +111,7 @@ export async function generateSummaryOpenRouter({
         // OpenRouter-specific headers in options
         headers: {
           "HTTP-Referer":
-            process.env.SITE_URL || "https://legislation-tracker.vercel.app",
+            process.env.SITE_URL || "https://legistrack.vercel.app",
           "X-Title": "Legislation Tracker - Bill Summarization",
         },
       }

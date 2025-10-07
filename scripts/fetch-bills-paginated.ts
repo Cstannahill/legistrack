@@ -10,13 +10,22 @@ import { CURRENT_CONGRESS } from "@/lib/constants";
 import { CompanionType } from "@prisma/client";
 
 // Configurable parameters
-const TOTAL_BILLS = parseInt(process.env.TOTAL_BILLS || "1000", 10);
+const TOTAL_BILLS = parseInt(process.env.TOTAL_BILLS || "100000", 10);
 const FETCH_TEXT = process.env.FETCH_TEXT === "true"; // Default false (fetch during summarization)
 const FETCH_COMPANIONS = process.env.FETCH_COMPANIONS !== "false"; // Default true
 const START_DATE = process.env.START_DATE;
 const END_DATE = process.env.END_DATE;
 const LOOKBACK_DAYS = process.env.LOOKBACK_DAYS;
 const BATCH_SIZE = 250; // Congress.gov API maximum
+// Optional: start at a specific page offset (page index, 0-based). Can be set via PAGE_OFFSET or OFFSET env var.
+const PAGE_OFFSET = (() => {
+  const raw = process.env.PAGE_OFFSET ?? process.env.OFFSET ?? "0";
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`Invalid PAGE_OFFSET/OFFSET provided: '${raw}'`);
+  }
+  return parsed;
+})();
 
 const formatCongressTimestamp = (value: Date) =>
   value.toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -450,7 +459,15 @@ async function main() {
   console.log();
 
   const numBatches = Math.ceil(TOTAL_BILLS / BATCH_SIZE);
-  console.log(`🔢 Will process ${numBatches} batch(es)\n`);
+  console.log(`🔢 Will process ${numBatches} batch(es)`);
+  if (PAGE_OFFSET > 0) {
+    console.log(
+      `➡️  Starting at page offset: ${PAGE_OFFSET} (skip ${
+        PAGE_OFFSET * BATCH_SIZE
+      } records)`
+    );
+  }
+  console.log();
 
   let totalCreated = 0;
   let totalUpdated = 0;
@@ -462,7 +479,15 @@ async function main() {
   let totalFetched = 0;
 
   try {
-    for (let batchNum = 0; batchNum < numBatches; batchNum++) {
+    // start from PAGE_OFFSET (page index), do not exceed numBatches
+    if (PAGE_OFFSET >= numBatches) {
+      console.log(
+        `⚠️  PAGE_OFFSET (${PAGE_OFFSET}) >= total batches (${numBatches}). Nothing to do.`
+      );
+      return;
+    }
+
+    for (let batchNum = PAGE_OFFSET; batchNum < numBatches; batchNum++) {
       const offset = batchNum * BATCH_SIZE;
       const remainingBills = TOTAL_BILLS - offset;
       const batchLimit = Math.min(BATCH_SIZE, remainingBills);

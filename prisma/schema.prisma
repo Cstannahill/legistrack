@@ -6,6 +6,7 @@ datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 model Bill {
@@ -304,6 +305,24 @@ model JobRun {
   metadata       Json?
 
   @@index([jobName, startedAt])
+}
+
+/// Durable dead-letter table for items that repeatedly fail LLM processing.
+model DeadLetter {
+  id                String   @id @default(cuid())
+  payload           Json
+  errorMessage      String?
+  attempts          Int      @default(0)
+  billId            String?
+  executiveOrderId  String?
+  createdAt         DateTime @default(now())
+  lastAttemptAt     DateTime?
+  processed         Boolean  @default(false)
+  processedAt       DateTime?
+
+  @@index([billId])
+  @@index([executiveOrderId])
+  @@index([processed, createdAt])
 }
 
 enum BillStatus {

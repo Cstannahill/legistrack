@@ -1,3 +1,4 @@
+
 -- CreateEnum
 CREATE TYPE "SubscriptionType" AS ENUM ('ALL_BILLS', 'SPECIFIC_CATEGORIES', 'KEYWORD_MATCH', 'MEMBER_ACTIVITY', 'EXECUTIVE_ORDERS');
 
@@ -122,3 +123,5 @@ ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY
 
 -- AddForeignKey
 ALTER TABLE "Subscription" ADD CONSTRAINT "Subscription_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+
