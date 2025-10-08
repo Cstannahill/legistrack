@@ -1,4 +1,6 @@
 import Link from 'next/link'
+// Revalidate this page every 60 seconds in production so counts stay fresh without forcing full SSR
+export const revalidate = 60
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ArrowRight, BookOpen, Bell, Search, TrendingUp, BookText } from 'lucide-react'
