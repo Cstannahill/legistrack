@@ -10,7 +10,7 @@ export const batchSummarizeBillsJob = inngest.createFunction(
     name: "Batch Summarize Bills",
     retries: 2,
   },
-  { cron: "0 2 * * *" }, // Run daily at 2 AM
+  { cron: "0 */4 * * *" }, // Run every 4 hours
   async ({ step }) => {
     // Step 1: Determine lookback window and select items from both tables
     const lookbackDate = subDays(new Date(), 3);
