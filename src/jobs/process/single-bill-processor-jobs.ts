@@ -77,7 +77,7 @@ function validateLLMResponse(response: LLMResponse): ValidationResult {
 }
 
 /**
- * Select a single bill/EO that needs processing using fallback logic
+ * Select a single bill/EO that needs processing using fallback logic -
  */
 async function selectSingleItemToProcess() {
   const lookbackDate = subDays(new Date(), 3);
