@@ -109,7 +109,7 @@ export const batchSummarizeBillsJob = inngest.createFunction(
             introducedDate: { gte: lookbackDate },
             OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
           },
-          take: 2, // Reduced for API rate limiting
+          take: 50, // Reduced for API rate limiting
           orderBy: { introducedDate: "desc" },
           select: {
             id: true,
@@ -126,7 +126,7 @@ export const batchSummarizeBillsJob = inngest.createFunction(
             signingDate: { gte: lookbackDate },
             OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
           },
-          take: 50,
+          take: 2,
           orderBy: { signingDate: "desc" },
           select: { id: true, orderNumber: true, title: true, fullText: true },
         });
