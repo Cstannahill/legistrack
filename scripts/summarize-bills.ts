@@ -123,7 +123,7 @@ async function main() {
   const resolveModelInfo = (key: OpenRouterModel) =>
     availableOpenRouterModels.find((m) => m.key === key)!;
 
-  let openRouterModel: OpenRouterModel = "deepseek";
+  let openRouterModel: OpenRouterModel = "qwen";
   let openRouterModelInfo = resolveModelInfo(openRouterModel);
 
   if (AI_MODEL === "openrouter") {

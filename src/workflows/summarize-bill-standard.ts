@@ -123,7 +123,7 @@ function resolveProvider(rawModel?: string | null): SummaryProvider {
 function resolveOpenRouterModel(
   preferredModel?: string | null
 ): OpenRouterModel {
-  const defaultModel: OpenRouterModel = "deepseek";
+  const defaultModel: OpenRouterModel = "qwen";
   if (!preferredModel) {
     return defaultModel;
   }

@@ -5,19 +5,26 @@ import { db } from "@/lib/db";
 const OPENROUTER_KEYS = (
   process.env.OPENROUTER_KEYS ||
   process.env.OPENROUTER_KEY ||
+  [
+    process.env.OPENROUTER_API_KEY_1,
+    process.env.OPENROUTER_API_KEY_2,
+    process.env.OPENROUTER_API_KEY_3,
+  ]
+    .filter(Boolean)
+    .join(",") ||
   ""
 )
   .split(",")
   .map((k) => k.trim())
   .filter(Boolean);
+
 if (OPENROUTER_KEYS.length === 0) {
   console.warn(
     "WARNING: No OPENROUTER_KEYS configured. LLM calls will fail until keys are provided."
   );
 }
 
-const MODEL =
-  process.env.OPENROUTER_MODEL || process.env.AI_MODEL || "deepseek";
+const MODEL = process.env.OPENROUTER_MODEL || process.env.AI_MODEL || "qwen";
 
 let keyIndex = 0;
 // round-robin pointer is stored in `keyIndex` and advanced when a reservation is made.
