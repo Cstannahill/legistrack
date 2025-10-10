@@ -1,6 +1,7 @@
 import { inngest } from "@/inngest/client";
 import { db } from "@/lib/db";
 import llm from "@/lib/llm";
+import { enqueuePayload } from "@/lib/llmRedis";
 import type { LLMResponse } from "@/lib/llm";
 import { enrichBillFromCongress } from "@/lib/api/congress-detail";
 import { subDays } from "date-fns";
@@ -104,12 +105,42 @@ export const batchSummarizeBillsJob = inngest.createFunction(
           select: { id: true, name: true, slug: true, description: true },
         });
 
-        const bills = await db.bill.findMany({
+        // Helper: map DB rows into the item shape we expect downstream
+        function mapBillRowToItem(b: any) {
+          return {
+            id: b.id,
+            type: "bill" as const,
+            title: b.title,
+            text: b.fullText,
+            meta: {
+              billType: b.billType,
+              billNumber: b.billNumber,
+              congress: b.congress,
+            },
+          };
+        }
+        function mapEOToItem(e: any) {
+          return {
+            id: e.id,
+            type: "executive-order" as const,
+            title: e.title,
+            text: e.fullText,
+            meta: { orderNumber: e.orderNumber },
+          };
+        }
+
+        // Primary attempt: recent items WITH fullText (so we can process immediately)
+        const primaryLookbackBills = await db.bill.findMany({
           where: {
             introducedDate: { gte: lookbackDate },
-            OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+            AND: [
+              { fullText: { not: null } }, // require full text present
+              {
+                OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+              },
+            ],
           },
-          take: 2, // Reduced for API rate limiting
+          take: 50,
           orderBy: { introducedDate: "desc" },
           select: {
             id: true,
@@ -121,9 +152,59 @@ export const batchSummarizeBillsJob = inngest.createFunction(
           },
         });
 
-        const eos = await db.executiveOrder.findMany({
+        const primaryLookbackEOs = await db.executiveOrder.findMany({
           where: {
             signingDate: { gte: lookbackDate },
+            AND: [
+              { fullText: { not: null } },
+              {
+                OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+              },
+            ],
+          },
+          take: 50,
+          orderBy: { signingDate: "desc" },
+          select: { id: true, orderNumber: true, title: true, fullText: true },
+        });
+
+        const billItems = primaryLookbackBills.map(mapBillRowToItem);
+        const eoItems = primaryLookbackEOs.map(mapEOToItem);
+
+        // If we already have up to 50 items (combined), return those
+        let combined = [...billItems, ...eoItems].slice(0, 50);
+        if (combined.length > 0) {
+          return {
+            categories: categories.map((c) => ({
+              slug: c.slug,
+              name: c.name,
+              description: c.description ?? undefined,
+            })),
+            items: combined,
+          };
+        }
+
+        // FALLBACK A: Look for ANY bill/EO in DB that has fullText and no summary (ignore date window)
+        // This finds older items that were enriched previously but never summarized.
+        const fallbackAnyBills = await db.bill.findMany({
+          where: {
+            fullText: { not: null },
+            OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+          },
+          take: 50,
+          orderBy: { introducedDate: "desc" },
+          select: {
+            id: true,
+            billType: true,
+            billNumber: true,
+            congress: true,
+            title: true,
+            fullText: true,
+          },
+        });
+
+        const fallbackAnyEOs = await db.executiveOrder.findMany({
+          where: {
+            fullText: { not: null },
             OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
           },
           take: 50,
@@ -131,52 +212,78 @@ export const batchSummarizeBillsJob = inngest.createFunction(
           select: { id: true, orderNumber: true, title: true, fullText: true },
         });
 
-        const billItems = bills.map((b) => ({
-          id: b.id,
-          type: "bill" as const,
-          title: b.title,
-          text: b.fullText,
-          meta: {
-            billType: b.billType,
-            billNumber: b.billNumber,
-            congress: b.congress,
+        combined = [
+          ...fallbackAnyBills.map(mapBillRowToItem),
+          ...fallbackAnyEOs.map(mapEOToItem),
+        ].slice(0, 50);
+
+        if (combined.length > 0) {
+          return {
+            categories: categories.map((c) => ({
+              slug: c.slug,
+              name: c.name,
+              description: c.description ?? undefined,
+            })),
+            items: combined,
+          };
+        }
+
+        // FALLBACK B: widen the lookback (e.g., another 90 days back) and try again
+        const widenedLookback = subDays(lookbackDate, 90);
+
+        const widenedBills = await db.bill.findMany({
+          where: {
+            introducedDate: { gte: widenedLookback },
+            AND: [
+              { fullText: { not: null } },
+              {
+                OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+              },
+            ],
           },
-        }));
+          take: 50,
+          orderBy: { introducedDate: "desc" },
+          select: {
+            id: true,
+            billType: true,
+            billNumber: true,
+            congress: true,
+            title: true,
+            fullText: true,
+          },
+        });
 
-        const eoItems = eos.map((e) => ({
-          id: e.id,
-          type: "executive-order" as const,
-          title: e.title,
-          text: e.fullText,
-          meta: { orderNumber: e.orderNumber },
-        }));
+        const widenedEOs = await db.executiveOrder.findMany({
+          where: {
+            signingDate: { gte: widenedLookback },
+            AND: [
+              { fullText: { not: null } },
+              {
+                OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+              },
+            ],
+          },
+          take: 50,
+          orderBy: { signingDate: "desc" },
+          select: { id: true, orderNumber: true, title: true, fullText: true },
+        });
 
+        combined = [
+          ...widenedBills.map(mapBillRowToItem),
+          ...widenedEOs.map(mapEOToItem),
+        ].slice(0, 50);
+
+        // Final: return whatever we found (may be empty)
         return {
           categories: categories.map((c) => ({
             slug: c.slug,
             name: c.name,
             description: c.description ?? undefined,
           })),
-          items: [...billItems, ...eoItems],
+          items: combined,
         };
       }
     );
-
-    if (itemsToProcess.items.length === 0) {
-      await step.run("log-batch-job", async () => {
-        await db.jobRun.create({
-          data: {
-            jobName: "batch-summarize-bills",
-            status: "COMPLETED",
-            itemsProcessed: 0,
-            startedAt: new Date(),
-            completedAt: new Date(),
-          },
-        });
-      });
-
-      return { message: "No recent items to summarize", itemsFound: 0 };
-    }
 
     // Step 2: Enrich bills with full text from Congress API
     const enrichmentResults = await step.run(
@@ -234,20 +341,57 @@ export const batchSummarizeBillsJob = inngest.createFunction(
     const summarizationResults = await step.run(
       "summarize-with-llm",
       async () => {
-        const results = [];
-        const retryQueue = [];
+        const results: Array<{
+          id: string;
+          type: string;
+          summaryId?: string | null;
+          categoriesApplied: number;
+        }> = [];
+        const retryQueue: Array<{ item: any; errors: string[] }> = [];
+
+        // helper: per-call timeout
+        function timeoutPromise<T>(
+          ms: number,
+          p: Promise<T>,
+          label = "timeout"
+        ) {
+          return new Promise<T>((resolve, reject) => {
+            const t = setTimeout(() => {
+              reject(new Error(`${label} after ${ms}ms`));
+            }, ms);
+            p.then((v) => {
+              clearTimeout(t);
+              resolve(v);
+            }).catch((e) => {
+              clearTimeout(t);
+              reject(e);
+            });
+          });
+        }
+
+        // helper: small sleep to avoid bursts
+        const sleepMs = 300; // adjust as desired
+        const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
         for (const item of enrichedItems) {
           if (!item.text) continue;
 
           try {
-            const response = await llm.summarizeAndCategorize({
-              title: item.title,
-              text: item.text,
-              categories: itemsToProcess.categories,
-            });
+            // Per-item: attempt the LLM call with a timeout so one slow call doesn't stall everything
+            const response = await timeoutPromise(
+              45_000, // 45s timeout per LLM call (tune if needed)
+              llm.summarizeAndCategorize({
+                title: item.title,
+                text: item.text,
+                categories: itemsToProcess.categories,
+                billId: item.type === "bill" ? item.id : undefined,
+                executiveOrderId:
+                  item.type === "executive-order" ? item.id : undefined,
+              }),
+              "llm.summarizeAndCategorize"
+            );
 
-            // Validate response
+            // Validate response structure and content quality
             const validation = validateLLMResponse(response);
 
             if (!validation.isValid) {
@@ -255,14 +399,37 @@ export const batchSummarizeBillsJob = inngest.createFunction(
                 `LLM response validation failed for ${item.id}:`,
                 validation.errors
               );
+
+              // If validation fails, enqueue for later re-run (so human can inspect or re-run)
               retryQueue.push({
                 item,
                 errors: validation.errors,
               });
+
+              // Optionally enqueue payload for later automated processing
+              try {
+                await enqueuePayload?.({
+                  title: item.title,
+                  text: item.text,
+                  categories: itemsToProcess.categories,
+                  billId: item.type === "bill" ? item.id : null,
+                  executiveOrderId:
+                    item.type === "executive-order" ? item.id : null,
+                });
+              } catch (e) {
+                console.error(
+                  "Failed to enqueue invalid/failed item",
+                  item.id,
+                  e
+                );
+              }
+
+              // wait a bit before next item
+              await sleep(sleepMs);
               continue;
             }
 
-            // Create summary record
+            // Create summary record immediately
             const summaryRecord = await db.summary.create({
               data: {
                 billId: item.type === "bill" ? item.id : null,
@@ -272,16 +439,15 @@ export const batchSummarizeBillsJob = inngest.createFunction(
                 summaryType: "STANDARD",
                 content: response.summary,
                 keyPoints: response.keyPoints || [],
-
                 aiModel: response.aiModel,
                 confidence: response.confidence,
                 generatedAt: new Date(),
               },
             });
 
-            // Connect categories
+            // Connect categories (limit to known ones and to max 3)
             if (response.categories && response.categories.length > 0) {
-              const validCategories = response.categories
+              const validCategories = (response.categories as string[])
                 .filter((slug: string) => slug in CATEGORY_MAP)
                 .slice(0, 3); // Max 3 categories
 
@@ -290,39 +456,79 @@ export const batchSummarizeBillsJob = inngest.createFunction(
               }));
 
               if (categoryIds.length > 0) {
-                if (item.type === "bill") {
-                  await db.bill.update({
-                    where: { id: item.id },
-                    data: { categories: { connect: categoryIds } },
-                  });
-                } else {
-                  await db.executiveOrder.update({
-                    where: { id: item.id },
-                    data: { categories: { connect: categoryIds } },
-                  });
+                try {
+                  if (item.type === "bill") {
+                    await db.bill.update({
+                      where: { id: item.id },
+                      data: { categories: { connect: categoryIds } },
+                    });
+                  } else {
+                    await db.executiveOrder.update({
+                      where: { id: item.id },
+                      data: { categories: { connect: categoryIds } },
+                    });
+                  }
+                } catch (updErr) {
+                  console.error(
+                    `Failed to connect categories for ${item.id}:`,
+                    updErr
+                  );
                 }
               }
             }
 
+            // Push to results
             results.push({
               id: item.id,
               type: item.type,
               summaryId: summaryRecord.id,
               categoriesApplied: response.categories?.length || 0,
             });
+
+            // small cooldown before next request to reduce rate-limit chances
+            await sleep(sleepMs);
           } catch (error: any) {
             console.error(`Error processing item ${item.id}:`, error);
 
-            if (error.code === "ENQUEUED") {
+            // If the LLM itself returned an ENQUEUED indicator, treat as enqueued
+            if (error?.code === "ENQUEUED") {
               console.log(`Item ${item.id} enqueued for later processing`);
-            } else {
               retryQueue.push({
                 item,
                 errors: [String(error)],
               });
+              continue;
+            }
+
+            // If timeout or network/LLM error, enqueue item for later processing
+            try {
+              await enqueuePayload?.({
+                title: item.title,
+                text: item.text,
+                categories: itemsToProcess.categories,
+                billId: item.type === "bill" ? item.id : null,
+                executiveOrderId:
+                  item.type === "executive-order" ? item.id : null,
+              });
+              retryQueue.push({
+                item,
+                errors: [String(error)],
+              });
+              console.log(`Enqueued ${item.id} after error: ${String(error)}`);
+            } catch (enqueueErr) {
+              // If enqueue failed, add to retryQueue with the error
+              console.error(
+                "Failed to enqueue after error for item",
+                item.id,
+                enqueueErr
+              );
+              retryQueue.push({
+                item,
+                errors: [String(error), String(enqueueErr)],
+              });
             }
           }
-        }
+        } // end for loop
 
         return { results, retryQueue };
       }

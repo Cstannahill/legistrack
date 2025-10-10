@@ -41,14 +41,15 @@ export default async function HomePage() {
 
             {/* Big stat */}
             <div className="mt-8 flex items-center gap-6">
-              <div className="flex items-center rounded-lg bg-gradient-to-r from-primary to-indigo-600 px-6 py-4 text-white shadow-lg">
-                <BookText className="mr-4 h-8 w-8" />
+              <div className="flex items-center rounded-lg lt-hero-stat px-6 py-4 shadow-lg">
+                <BookText className="mr-4 h-8 w-8 text-primary" />
                 <div className="text-left">
-                  <div className="text-sm">Pieces of Legislation Summarized</div>
-                  <div className="text-3xl font-bold">{complete.toLocaleString()}</div>
+                  <div className="text-sm lt-muted">Pieces of Legislation Summarized</div>
+                  <div className="text-3xl font-bold" style={{ background: 'linear-gradient(90deg,#7C5CFF,#6EE7B7)', WebkitBackgroundClip: 'text', color: 'transparent' }}>
+                    {complete.toLocaleString()}
+                  </div>
                 </div>
               </div>
-
             </div>
           </div>
         </div>

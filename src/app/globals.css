@@ -76,6 +76,15 @@
   --sidebar-accent-foreground: oklch(0.216 0.006 56.043);
   --sidebar-border: oklch(0.923 0.003 48.717);
   --sidebar-ring: oklch(0.709 0.01 56.259);
+
+  /* Site Theme */
+  --lt-primary: #0f5e57;
+  --lt-accent: #7c5cff;
+  --lt-mint: #6ee7b7;
+  --lt-neutral-bg: #f7f8fa;
+  --lt-card-border: #e6e8eb;
+  --lt-text-primary: #0f1724;
+  --lt-text-muted: #6b7280;
 }
 
 .dark {
@@ -110,6 +119,192 @@
   --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.553 0.013 58.071);
+
+  --lt-primary: #6ee7b7;
+  --lt-accent: #7c5cff;
+  --lt-mint: #79f2d6;
+  --lt-neutral-bg: #0b1220;
+  --lt-card-border: rgba(255, 255, 255, 0.06);
+  --lt-text-primary: #e6eef1;
+  --lt-text-muted: #94a3b8;
+}
+
+/* Helper Classes */
+@keyframes lt-gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Hero stat gradient box */
+.lt-hero-stat {
+  background: linear-gradient(
+    90deg,
+    rgba(124, 92, 255, 0.12),
+    rgba(110, 231, 183, 0.08)
+  );
+  border-radius: 14px;
+  padding: 6px;
+  display: inline-block;
+}
+/* Card utility */
+.lt-card {
+  border-radius: 1rem;
+  background-color: var(--card);
+  border: 1px solid var(--lt-card-border);
+  box-shadow: 0 8px 24px rgba(15, 23, 36, 0.06);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.lt-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 18px 48px rgba(15, 23, 36, 0.12);
+}
+
+/* Big rounded grid card for list */
+.lt-card-grid {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* small chip */
+.lt-chip {
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* status badge variations */
+.lt-badge {
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/* category chip color helper (uses inline style or CSS var) */
+.lt-category {
+  padding: 0.18rem 0.5rem;
+  border-radius: 10rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+/* Skeleton placeholder */
+.lt-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.05) 0%,
+    rgba(0, 0, 0, 0.06) 50%,
+    rgba(0, 0, 0, 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: lt-gradientShift 1.4s ease infinite;
+  border-radius: 8px;
+}
+
+/* Simple responsive grid helpers - 2 columns max for wider cards */
+.lt-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+@media (min-width: 768px) {
+  .lt-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+  .lt-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* text helpers */
+.lt-title {
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial;
+  color: var(--lt-text-primary);
+  font-weight: 500;
+  font-size: 1rem;
+}
+
+.lt-muted {
+  color: var(--lt-text-muted);
+}
+
+/* link focus styles */
+a:focus,
+button:focus {
+  outline: 3px solid color-mix(in srgb, var(--lt-primary) 12%, transparent);
+  outline-offset: 2px;
+}
+/* ---------- Ensures grid children stretch to same height ---------- */
+.lt-grid > * {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Make each card a column, with a flexible main area and footer pinned */
+.lt-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* existing properties kept (border, shadow, radius) */
+}
+
+/* main body grows to push footer down */
+.lt-card-main {
+  flex: 1 1 auto; /* allow expansion */
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* footer is pushed to bottom of card */
+.lt-card-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* consistent title clamp: shows up to 3 lines then ellipsis */
+.lt-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 3.9rem; /* ensures two-to-three line visual baseline (adjust if you prefer) */
+}
+
+/* chips/metadata remain small and aligned */
+.lt-chip,
+.lt-category,
+.lt-badge {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+@keyframes lt-gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 @layer base {
