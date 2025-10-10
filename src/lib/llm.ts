@@ -1,29 +1,67 @@
 import { z } from "zod";
 import llmRedis from "@/lib/llmRedis";
 import { db } from "@/lib/db";
+import OpenAI from "openai";
 
 const OPENROUTER_KEYS = (
-  process.env.OPENROUTER_KEYS ||
-  process.env.OPENROUTER_KEY ||
   [
     process.env.OPENROUTER_API_KEY_1,
     process.env.OPENROUTER_API_KEY_2,
     process.env.OPENROUTER_API_KEY_3,
   ]
     .filter(Boolean)
-    .join(",") ||
-  ""
+    .join(",") || ""
 )
   .split(",")
   .map((k) => k.trim())
   .filter(Boolean);
-
+type OpenRouterMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
 if (OPENROUTER_KEYS.length === 0) {
   console.warn(
     "WARNING: No OPENROUTER_KEYS configured. LLM calls will fail until keys are provided."
   );
 }
 
+const OPENROUTER_MODELS = {
+  deepseek: {
+    id: "deepseek/deepseek-chat-v3.1:free",
+    name: "DeepSeek V3.1",
+    contextWindow: 163800,
+    description: "671B params (37B active), best quality-to-cost ratio",
+  },
+  qwen: {
+    id: "qwen/qwen3-235b-a22b:free",
+    name: "Qwen3 235B A22B",
+    contextWindow: 131072,
+    description: "235B params (22B active), strong reasoning",
+  },
+  gemini: {
+    id: "google/gemini-2.0-flash-exp:free",
+    name: "Gemini 2.0 Flash",
+    contextWindow: 1048576,
+    description: "1M context window, can handle entire bills",
+  },
+  mistral: {
+    id: "mistralai/mistral-small-3.2-24b-instruct:free",
+    name: "Mistral Small 3.2",
+    contextWindow: 131072,
+    description: "24B params, fast and efficient",
+  },
+} as const;
+
+export type OpenRouterModel = keyof typeof OPENROUTER_MODELS;
+
+// Initialize OpenRouter client (uses OpenAI SDK with custom base URL)
+const openrouter = new OpenAI({
+  apiKey:
+    OPENROUTER_KEYS.length > 0
+      ? OPENROUTER_KEYS[Math.floor(Math.random() * OPENROUTER_KEYS.length)]
+      : undefined,
+  baseURL: "https://openrouter.ai/api/v1",
+});
 const MODEL = process.env.OPENROUTER_MODEL || process.env.AI_MODEL || "qwen";
 
 let keyIndex = 0;
@@ -45,7 +83,7 @@ function buildPrompt(
   title: string,
   text: string | null,
   categories: { slug: string; name: string; description?: string }[]
-) {
+): OpenRouterMessage[] {
   const catList = categories
     .map(
       (c, i) =>
@@ -93,43 +131,59 @@ RESPOND WITH ONLY THE JSON OBJECT. NO MARKDOWN. NO EXPLANATIONS.`;
   ];
 }
 
-async function callOpenRouterWithKey(apiKey: string, messages: unknown[]) {
-  const url = "https://api.openrouter.ai/v1/chat/completions";
-  const body = {
-    model: MODEL,
-    messages,
-    temperature: 0.0,
-    max_tokens: 800,
-  };
+async function callOpenRouterWithKey(
+  apiKey: string,
+  messages: OpenRouterMessage[]
+): Promise<string> {
+  // ensure we index OPENROUTER_MODELS safely
+  const modelConfig =
+    OPENROUTER_MODELS[MODEL as keyof typeof OPENROUTER_MODELS];
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  try {
+    // The OpenRouter SDK often accepts the same shape as the REST API, but
+    // its types may require ChatCompletionMessageParam[].
+    // Easiest fix here: assert messages into any to satisfy the SDK typing.
+    // If you prefer stricter typing, see the "optional improvements" section below.
+    const completion = await openrouter.chat.completions.create(
+      {
+        model: modelConfig.id,
+        // cast to any to satisfy the SDK's stricter message type expectation
+        messages: messages as any,
+        temperature: 0.3,
+        max_tokens: 4000,
+      },
+      {
+        // include OpenRouter-specific headers and the API key
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          // use nullish coalescing to satisfy TS: expression will always be string
+          "HTTP-Referer":
+            process.env.SITE_URL ?? "https://legistrack.vercel.app",
+          "X-Title": "Legislation Tracker - Bill Summarization",
+        },
+      }
+    );
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    const err = new Error(
-      `OpenRouter error ${res.status}: ${res.statusText} ${text}`
-    ) as Error & { status?: number };
-    err.status = res.status;
-    throw err;
+    // robust extraction: depending on SDK version shape may differ.
+    const content =
+      (completion as any)?.choices?.[0]?.message?.content ??
+      (completion as any)?.choices?.[0]?.text ??
+      null;
+
+    if (!content) {
+      throw new Error("OpenRouter returned no content");
+    }
+
+    return content;
+  } catch (error) {
+    console.error(
+      `OpenRouter API error with ${modelConfig?.name ?? MODEL}:`,
+      error
+    );
+    // rethrow so caller can handle/refund
+    throw error;
   }
-
-  const payload = await res.json();
-  // The OpenRouter response shape may vary; choose first choice message
-  const content =
-    payload?.choices?.[0]?.message?.content ??
-    payload?.choices?.[0]?.text ??
-    null;
-  if (!content) throw new Error("OpenRouter returned no content");
-  return content;
 }
-
 async function parseAndValidate(content: string): Promise<LLMResponse> {
   // Trim and attempt to find JSON in response
   const trimmed = content.trim();
