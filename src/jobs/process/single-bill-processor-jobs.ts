@@ -386,8 +386,8 @@ function createProcessorJob(jobNumber: 1 | 2 | 3, cronMinute: 0 | 20 | 40) {
 
   return inngest.createFunction(
     {
-      id: "batch-summarize-bills",
-      name: "Batch Summarize Bills",
+      id: jobId,
+      name: jobName,
       retries: 1,
     },
     { cron: `${cronMinute} */1 * * *` }, // Every hour at specified minute

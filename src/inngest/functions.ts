@@ -4,7 +4,11 @@ import { fetchBillsJob } from "@/jobs/fetch/fetch-bills";
 import { fetchExecutiveOrdersJob } from "@/jobs/fetch/fetch-executive-orders";
 import { summarizeBillJob } from "@/jobs/process/summarize-legislation";
 import { categorizeBillJob } from "@/jobs/process/categorize-bills";
-import { batchSummarizeBillsJob } from "@/jobs/process/batch-summarize-bills";
+import {
+  singleBillProcessor1,
+  singleBillProcessor2,
+  singleBillProcessor3,
+} from "@/jobs/process/single-bill-processor-jobs";
 
 // Export all functions that should be registered with Inngest
 export const functions = [
@@ -12,5 +16,7 @@ export const functions = [
   fetchExecutiveOrdersJob,
   summarizeBillJob,
   categorizeBillJob,
-  batchSummarizeBillsJob,
+  singleBillProcessor1,
+  singleBillProcessor2,
+  singleBillProcessor3,
 ];
