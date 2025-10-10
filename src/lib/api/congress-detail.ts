@@ -61,8 +61,9 @@ export async function fetchBillDetail(
       `Congress API error: ${response.status} ${response.statusText}`
     );
   }
-
-  return response.json();
+  const data = await response.json();
+  console.log(`data for detail: ${data}`);
+  return data;
 }
 
 /**
@@ -86,7 +87,7 @@ export async function fetchBillText(
     }
 
     const data: BillTextVersion = await response.json();
-
+    console.log(`data for text: ${data}`);
     // Get the most recent text version
     if (data.textVersions && data.textVersions.length > 0) {
       const latestVersion = data.textVersions[0];
