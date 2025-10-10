@@ -62,7 +62,7 @@ export async function fetchBillDetail(
     );
   }
   const data = await response.json();
-  console.log(`data for detail: ${data}`);
+  console.log(`data for detail: ${JSON.stringify(data)}`);
   return data;
 }
 
@@ -87,7 +87,7 @@ export async function fetchBillText(
     }
 
     const data: BillTextVersion = await response.json();
-    console.log(`data for text: ${data}`);
+    console.log(`data for text: ${JSON.stringify(data)}`);
     // Get the most recent text version
     if (data.textVersions && data.textVersions.length > 0) {
       const latestVersion = data.textVersions[0];
