@@ -1,9 +1,15 @@
 import Link from 'next/link'
+// Revalidate this page every 60 seconds in production so counts stay fresh without forcing full SSR
+export const revalidate = 60
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowRight, BookOpen, Bell, Search, TrendingUp } from 'lucide-react'
+import { ArrowRight, BookOpen, Bell, Search, TrendingUp, BookText } from 'lucide-react'
+import { get_count_complete_legislation } from '@/lib/stats'
 
-export default function HomePage() {
+export default async function HomePage() {
+  const complete = await get_count_complete_legislation()
+
+
   return (
     <div className="flex flex-col">
       {/* Hero Section */}
@@ -22,7 +28,7 @@ export default function HomePage() {
             <div className="space-x-4">
               <Link href="/bills">
                 <Button size="lg">
-                  Browse Bills
+                  Browse Legislation
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </Link>
@@ -31,6 +37,19 @@ export default function HomePage() {
                   Explore Categories
                 </Button>
               </Link> */}
+            </div>
+
+            {/* Big stat */}
+            <div className="mt-8 flex items-center gap-6">
+              <div className="flex items-center rounded-lg lt-hero-stat px-6 py-4 shadow-lg">
+                <BookText className="mr-4 h-8 w-8 text-primary" />
+                <div className="text-left">
+                  <div className="text-sm lt-muted">Pieces of Legislation Summarized</div>
+                  <div className="text-3xl font-bold" style={{ background: 'linear-gradient(90deg,#7C5CFF,#6EE7B7)', WebkitBackgroundClip: 'text', color: 'transparent' }}>
+                    {complete.toLocaleString()}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -93,6 +112,8 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* Data breakdown removed per request */}
 
       {/* CTA Section */}
       <section className="w-full py-12 md:py-24">

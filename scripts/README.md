@@ -15,6 +15,18 @@ BATCH_SIZE=20 npm run summarize-bills-openai
 npm run summarize-bills-anthropic
 BATCH_SIZE=10 npm run summarize-bills-anthropic
 
+# With OpenRouter Models (FREE!)
+npm run gen-sum-or deepseek HR 4398   # DeepSeek V3.1 (best quality)
+npm run gen-sum-or qwen S 2309        # Qwen3 235B (great alternative)
+npm run gen-sum-or gemini HRES 723    # Gemini 2.0 Flash (1M context)
+npm run gen-sum-or mistral HR 5371    # Mistral Small 3.2 (fastest)
+
+# Executive Orders with OpenRouter (FREE!)
+npm run gen-sum-or-eo deepseek 14067  # DeepSeek V3.1 (best quality)
+npm run gen-sum-or-eo qwen 14111      # Qwen3 235B (great alternative)
+npm run gen-sum-or-eo gemini 14175    # Gemini 2.0 Flash (1M context)
+npm run gen-sum-or-eo mistral 14177   # Mistral Small 3.2 (fastest)
+
 # With explicit environment variables
 AI_MODEL=openai BATCH_SIZE=15 npm run summarize-bills
 AI_MODEL=anthropic BATCH_SIZE=5 npm run summarize-bills
@@ -36,20 +48,50 @@ AI_MODEL=openai BATCH_SIZE=15 npm run summarize-executive-orders
 AI_MODEL=anthropic BATCH_SIZE=5 npm run summarize-executive-orders
 ```
 
+### Fetch Bill Actions (Congress.gov activity log)
+
+```bash
+# Dry run (no database writes) for a specific bill
+npm run fetch-bill-actions -- --bill 118-hr-123 --dry-run
+
+# Refresh actions for bills missing records (writes to DB)
+npm run fetch-bill-actions
+
+# Force refresh even if actions are already stored
+npm run fetch-bill-actions -- --refetch --limit 50
+```
+
+**Notes:**
+
+- Parses bill identifiers like `118-hr-123` or `s-2345` and falls back to the current Congress.
+- Stores each action with date, type, optional code, and text while updating the bill's status/date from the newest action.
+- Use the dry-run flag to inspect Congress.gov results before writing to the database.
+
 **Key Features:**
 
 - ✅ **Only generates STANDARD summaries** (saves 2/3 of API costs)
 - ✅ **Skips already-summarized items** (no wasted API calls)
-- ✅ **Full model control** (choose OpenAI or Anthropic per batch)
+- ✅ **Full model control** (choose OpenAI, Anthropic, or OpenRouter)
 - ✅ **Batch size control** (manage costs precisely)
+- ✅ **FREE OpenRouter models** (DeepSeek, Qwen, Gemini, Mistral)
 
 **Cost Comparison (per item):**
 
+- OpenRouter (DeepSeek, Qwen, etc.): **FREE** 🎉
 - GPT-5-nano: ~$0.0003-0.001 per summary
 - Claude Sonnet 4.5: ~$0.008-0.024 per summary
 - **Savings: 3x cost reduction** (1 summary vs 3 per item)
 
----
+**OpenRouter Models:**
+
+| Model             | Command    | Best For                           |
+| ----------------- | ---------- | ---------------------------------- |
+| DeepSeek V3.1     | `deepseek` | Best overall quality (671B params) |
+| Qwen3 235B        | `qwen`     | Strong reasoning (235B params)     |
+| Gemini 2.0 Flash  | `gemini`   | Long bills (1M context)            |
+| Mistral Small 3.2 | `mistral`  | Speed (24B params)                 |
+
+## See [OPENROUTER_INTEGRATION.md](../docs/OPENROUTER_INTEGRATION.md) for full details.
 
 ## ⚠️ Important: Congress.gov API Limitation
 
@@ -95,6 +137,41 @@ LIMIT=250 OFFSET=750 npm run fetch-bills  # Bills 750-999
 - Required API keys: `CONGRESS_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 
 ## Available Scripts
+
+### 🤖 Scheduled Jobs Keep Pace
+
+- Inngest background functions now call the same shared workflow (`src/workflows/summarize-bill-standard.ts`) as the CLI. Cron-triggered runs only generate **STANDARD** summaries and respect `AI_MODEL`/`INGEST_AI_MODEL` overrides—including OpenRouter selections.
+- The `fetch-bills` job mirrors the CLI normalization steps, coercing bill numbers to integers, syncing official titles, updating `lastFetchedAt`, and preserving status history even when nothing else changes.
+- Categorization and batch fan-out still execute only after a successful STANDARD summary, so downstream jobs never run on incomplete records.
+
+### `migrate-data-to-supabase.ts` - Sync Local Database to Supabase
+
+Safely copies data from your local Prisma database to your Supabase Postgres instance without touching your development connection string.
+
+```bash
+# Uses DATABASE_URL for local reads and SUPABASE_POSTGRES_PRISMA_URL for Supabase writes
+tsx scripts/migrate-data-to-supabase.ts
+```
+
+**Environment variables required:**
+
+- `DATABASE_URL` → Local development database (read source)
+- `SUPABASE_POSTGRES_PRISMA_URL` → Supabase pooled connection string _(preferred)_
+- `SUPABASE_POSTGRES_URL_NON_POOLING` → Fallback if pooled URL is unavailable
+
+**What the script does:**
+
+1. Connects to the local database using `DATABASE_URL`
+2. Connects separately to Supabase using the pooled Prisma URL (falls back to non-pooling)
+3. Logs both host targets before migrating for sanity checks
+4. Transfers bills, summaries, categories, and related join tables
+5. Skips items that already exist remotely to avoid duplication
+
+**Tips:**
+
+- Run `npm run db:push` locally first to ensure schema parity
+- The script emits counts per model; review the summary before re-running
+- If you need to repeat the migration, Supabase records are upserted so re-runs are safe
 
 ### 0. `test-generate-summary.ts` - **Single Bill Summary Generation (Testing & Comparison)** ⭐ NEW!
 
@@ -254,6 +331,10 @@ FETCH_TEXT=true TOTAL_BILLS=100 npm run fetch-bills-paginated
 - `TOTAL_BILLS` - Total number of bills to fetch (default: 1000)
 - `FETCH_TEXT` - Fetch full text (default: **false**, for speed)
 - `FETCH_COMPANIONS` - Link companion bills (default: true)
+- `START_DATE` / `END_DATE` - ISO date strings (or `YYYY-MM-DD`) to restrict the window
+- `LOOKBACK_DAYS` - Alternative to dates; pull the trailing N days ending at `END_DATE` (or today)
+
+  > Congress.gov only accepts timestamps in `YYYY-MM-DDTHH:MM:SSZ` format—no milliseconds. The script automatically normalizes values, but ensure custom inputs include the trailing `Z` or use simple dates (we'll coerce to midnight UTC).
 
 **What it does:**
 
@@ -295,7 +376,7 @@ FETCH_TEXT=true TOTAL_BILLS=100 npm run fetch-bills-paginated
 💡 Tip: Run 'npm run summarize-bills' to fetch text + generate AI summaries!
 ```
 
-**⚠️ IMPORTANT:** The Congress.gov API list endpoint does NOT include `introducedDate` or text URLs. This script uses `updateDate` as a fallback. Accurate dates and full text are fetched during summarization.
+**⚠️ IMPORTANT:** The Congress.gov API list endpoint does NOT include `introducedDate` or text URLs. This script uses `updateDate` as a fallback when creating new records but avoids overwriting enriched fields already populated by the summarization workflow.
 
 ---
 

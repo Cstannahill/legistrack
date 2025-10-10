@@ -1,0 +1,107 @@
+CREATE OR REPLACE FUNCTION get_executive_orders(
+  offset_val INT DEFAULT 0,
+  limit_val INT DEFAULT 50,
+  p_category_slug TEXT DEFAULT NULL,
+  p_president_name TEXT DEFAULT NULL,
+  p_search TEXT DEFAULT NULL,
+  p_signing_start DATE DEFAULT NULL,
+  p_signing_end DATE DEFAULT NULL,
+  p_sort_field TEXT DEFAULT 'signingDate',      -- allowed: signingDate, publicationDate, updatedAt
+  p_sort_dir TEXT DEFAULT 'desc'                -- allowed: asc, desc
+)
+RETURNS TABLE (
+  id TEXT,
+  kind TEXT,
+  "billType" TEXT,
+  "billNumber" TEXT,
+  congress INT,
+  title TEXT,
+  "currentStatus" public."BillStatus",
+  sort_date TIMESTAMP,
+  "presidentName" TEXT,
+  categories JSONB,
+  sponsor JSONB,
+  total_count BIGINT
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  sort_col TEXT;
+  sort_direction TEXT;
+BEGIN
+  IF p_sort_field = 'publicationDate' THEN
+    sort_col := 'publicationDate';
+  ELSIF p_sort_field = 'updatedAt' THEN
+    sort_col := 'updatedAt';
+  ELSE
+    sort_col := 'signingDate';
+  END IF;
+
+  IF lower(p_sort_dir) = 'asc' THEN
+    sort_direction := 'ASC';
+  ELSE
+    sort_direction := 'DESC';
+  END IF;
+
+  RETURN QUERY
+  EXECUTE format($fmt$
+    WITH filtered AS (
+      SELECT
+        e.id::text,
+        'executiveOrder'::text AS kind,
+        NULL::text AS "billType",
+        e."orderNumber"::text AS "billNumber",
+        NULL::int AS congress,
+        e.title::text AS title,
+        NULL::public."BillStatus" AS "currentStatus",
+        CASE
+          WHEN %I = 'publicationDate' AND e."publicationDate" IS NOT NULL THEN e."publicationDate"
+          WHEN %I = 'updatedAt' AND e."updatedAt" IS NOT NULL THEN e."updatedAt"
+          ELSE e."signingDate"
+        END::timestamp AS sort_date,
+        e."presidentName"::text AS "presidentName",
+        e.id::text AS stable_id,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('id', c.id, 'name', c.name, 'slug', c.slug))
+          FROM public."_ExecutiveOrderCategories" eoc
+          JOIN public."Category" c ON c.id = eoc."A"
+          WHERE eoc."B" = e.id
+        ), '[]'::jsonb) AS categories,
+        NULL::jsonb AS sponsor
+      FROM public."ExecutiveOrder" e
+      WHERE e."fullText" IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM public."Summary" s
+          WHERE s."executiveOrderId" = e.id
+            AND s."content" IS NOT NULL
+        )
+        AND ($1::TEXT IS NULL OR EXISTS (
+              SELECT 1 FROM public."_ExecutiveOrderCategories" ec2
+              JOIN public."Category" c2 ON c2.id = ec2."A"
+              WHERE ec2."B" = e.id AND c2.slug = $1))
+        AND ($2::TEXT IS NULL OR e."presidentName" ILIKE '%%' || $2 || '%%')
+        AND ($3::TEXT IS NULL OR e.title ILIKE '%%' || $3 || '%%')
+        AND ($4::DATE IS NULL OR e."signingDate" >= $4)
+        AND ($5::DATE IS NULL OR e."signingDate" <= $5)
+    )
+    SELECT
+      f.id,
+      f.kind,
+      f."billType",
+      f."billNumber",
+      f.congress,
+      f.title,
+      f."currentStatus",
+      f.sort_date,
+      f."presidentName",
+      f.categories,
+      f.sponsor,
+      COUNT(*) OVER()::bigint AS total_count
+    FROM filtered f
+    ORDER BY f.sort_date %s NULLS LAST, f.kind, f.stable_id
+    OFFSET $6
+    LIMIT $7
+  $fmt$, sort_col, sort_col, sort_direction )
+  USING p_category_slug, p_president_name, p_search, p_signing_start, p_signing_end, offset_val, limit_val;
+END;
+$$;

@@ -1,8 +1,10 @@
 // Background Job: Summarize Bills using AI
 import { inngest } from "@/inngest/client";
 import { db } from "@/lib/db";
-import { generateSummary } from "@/lib/ai/summarizer";
-import { fetchBillText } from "@/lib/api/congress";
+import {
+  summarizeBillStandard,
+  type SummaryProvider,
+} from "@/workflows/summarize-bill-standard";
 
 export const summarizeBillJob = inngest.createFunction(
   {
@@ -12,92 +14,98 @@ export const summarizeBillJob = inngest.createFunction(
   },
   { event: "bill/summarize" },
   async ({ event, step }) => {
-    const { billId } = event.data;
+    const {
+      billId,
+      congress,
+      billType: payloadBillType,
+      billNumber,
+    } = event.data as {
+      billId?: string;
+      congress?: number;
+      billType?: string;
+      billNumber?: number;
+    };
 
-    // Step 1: Fetch bill details
+    if (!billId && !(congress && payloadBillType && billNumber)) {
+      throw new Error(
+        "Invalid bill/summarize payload: provide billId or congress+billType+billNumber"
+      );
+    }
+
+    // Step 1: Ensure bill exists for logging context
     const bill = await step.run("fetch-bill", async () => {
-      return await db.bill.findUnique({
-        where: { id: billId },
-        include: {
-          sponsor: true,
-          actions: {
-            orderBy: { actionDate: "desc" },
-            take: 10,
+      if (billId) {
+        return await db.bill.findUnique({
+          where: { id: billId },
+          select: {
+            id: true,
+            billType: true,
+            billNumber: true,
+            title: true,
           },
+        });
+      }
+
+      return await db.bill.findUnique({
+        where: {
+          congress_billType_billNumber: {
+            congress: congress!,
+            billType: payloadBillType!.toLowerCase(),
+            billNumber: billNumber!,
+          },
+        },
+        select: {
+          id: true,
+          billType: true,
+          billNumber: true,
+          title: true,
         },
       });
     });
 
     if (!bill) {
-      throw new Error(`Bill not found: ${billId}`);
+      throw new Error(
+        `Bill not found: ${
+          billId ?? `${congress}-${payloadBillType}-${billNumber}`
+        }`
+      );
     }
 
-    // Step 2: Fetch full text if not already stored
-    const fullText = await step.run("fetch-full-text", async () => {
-      if (bill.fullText) return bill.fullText;
-
-      // Try to fetch from Congress.gov API
-      const textData = await fetchBillText(
-        bill.congress,
-        bill.billType,
-        bill.billNumber
-      );
-
-      if (textData?.url) {
-        const response = await fetch(textData.url);
-        const text = await response.text();
-
-        // Update bill with full text
-        await db.bill.update({
-          where: { id: billId },
-          data: { fullText: text, fullTextUrl: textData.url },
+    const providerEnv =
+      (process.env.INGEST_AI_MODEL as SummaryProvider | undefined) ??
+      (process.env.AI_MODEL as SummaryProvider | undefined);
+    // Step 2: Generate STANDARD summary using shared workflow
+    const summaryResult = await step.run(
+      "generate-standard-summary",
+      async () => {
+        return await summarizeBillStandard({
+          billId: bill.id,
+          aiModel: providerEnv,
+          logger: (message) =>
+            console.log(
+              `[summarize-bill:${bill.billType.toUpperCase()} ${
+                bill.billNumber
+              }] ${message}`
+            ),
         });
-
-        return text;
       }
+    );
 
-      // If no full text available, use title
-      return bill.title;
-    });
+    if (summaryResult.status === "error") {
+      throw new Error(
+        `Failed to summarize bill ${billId}: ${summaryResult.reason}`
+      );
+    }
 
-    // Step 3: Generate different summary types
-    const summaries = await step.run("generate-summaries", async () => {
-      const summaryTypes = ["BRIEF", "STANDARD", "ELI5"] as const;
-      const results = [];
+    if (summaryResult.status === "skipped") {
+      return {
+        success: false,
+        status: "skipped",
+        reason: summaryResult.reason,
+      } as const;
+    }
 
-      for (const type of summaryTypes) {
-        try {
-          const summary = await generateSummary({
-            title: bill.title,
-            fullText: fullText,
-            billType: bill.billType,
-            sponsor: bill.sponsor?.fullName,
-            status: bill.currentStatus,
-            summaryType: type,
-          });
-
-          const created = await db.summary.create({
-            data: {
-              billId: bill.id,
-              summaryType: type,
-              content: summary.content,
-              keyPoints: summary.keyPoints,
-              impactAreas: summary.impactAreas,
-              aiModel: summary.model,
-              confidence: summary.confidence,
-            },
-          });
-
-          results.push(created);
-        } catch (error) {
-          console.error(`Failed to generate ${type} summary:`, error);
-        }
-      }
-
-      return results;
-    });
-
-    // Step 4: Auto-categorize the bill
+    // Step 3: Auto-categorize the bill now that STANDARD summary exists
     await step.run("categorize-bill", async () => {
       await inngest.send({
         name: "bill/categorize",
@@ -107,7 +115,9 @@ export const summarizeBillJob = inngest.createFunction(
 
     return {
       success: true,
-      summariesCreated: summaries.length,
+      summaryId: summaryResult.summaryId,
+      model: summaryResult.model,
+      durationMs: summaryResult.durationMs,
     };
   }
 );

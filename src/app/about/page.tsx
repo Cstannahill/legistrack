@@ -1,7 +1,48 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { db } from "@/lib/db";
 
-export default function AboutPage() {
+async function getCoverageMonths() {
+    // 1) Retrieve today's date
+    const today = new Date();
+
+    // 2) Query DB for the oldest introducedDate among bills
+    const oldest = await db.bill.findFirst({
+        orderBy: { introducedDate: "asc" },
+        select: { introducedDate: true },
+    });
+
+    // Validation: if no bills
+    if (!oldest || !oldest.introducedDate) {
+        return { status: "no-bills" } as const; // validated: no bills found
+    }
+
+    const introduced = new Date(oldest.introducedDate);
+
+    // Validation: introduced date in future
+    if (introduced > today) {
+        return { status: "future" } as const; // validated: oldest date is in future
+    }
+
+    // 3) Calculate months difference (rounded to nearest whole number)
+    const yearsDiff = today.getFullYear() - introduced.getFullYear();
+    const monthsDiff = today.getMonth() - introduced.getMonth();
+    const daysDiff = today.getDate() - introduced.getDate();
+
+    let totalMonths = yearsDiff * 12 + monthsDiff;
+    // Adjust if days difference crosses the halfway point of a month
+    if (daysDiff >= 15) totalMonths += 1;
+    if (totalMonths < 0) totalMonths = 0;
+
+    // 4) Return computed months with singular/plural logic
+    return { status: "ok" as const, months: totalMonths };
+}
+
+export default async function AboutPage() {
+    const coverage = await getCoverageMonths();
+
+    // Validation is handled inside getCoverageMonths(); proceed to render
+
     return (
         <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
             <div className="container mx-auto px-4 py-12 max-w-4xl">
@@ -33,6 +74,21 @@ export default function AboutPage() {
                         </p>
                     </section>
 
+                    <section className="mb-8 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-6 border-l-4 border-blue-500">
+                        <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
+                            Commitment to Free Access
+                        </h2>
+                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed text-lg">
+                            <strong>LegisTrack will always be free to use.</strong>
+                        </p>
+                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed mt-4">
+                            We believe that access to government legislation and clear explanations of it
+                            should never be behind a paywall. This project isn&apos;t about subscriptions, ads,
+                            or monetization — it&apos;s about making legislation more transparent and
+                            understandable for everyone.
+                        </p>
+                    </section>
+
                     <section className="mb-8">
                         <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
                             Current Focus
@@ -53,9 +109,23 @@ export default function AboutPage() {
                             Coverage
                         </h2>
                         <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                            Currently, our database includes legislation from the <strong>past 10 months</strong>.
-                            In future iterations, we plan to expand our coverage to include all available
-                            historical legislation, providing a comprehensive archive of government actions.
+                            {coverage.status === "no-bills" ? (
+                                <strong>No legislative data available.</strong>
+                            ) : coverage.status === "future" ? (
+                                <strong>Data start date is in the future.</strong>
+                            ) : (
+                                (() => {
+                                    const months = coverage.months;
+                                    const label = months === 1 ? "month" : "months";
+                                    return (
+                                        <>
+                                            Currently, our database includes legislation from the <strong>past {months} {label}</strong>.
+                                            In future iterations, we plan to expand our coverage to include all available
+                                            historical legislation, providing a comprehensive archive of government actions.
+                                        </>
+                                    );
+                                })()
+                            )}
                         </p>
                     </section>
 
@@ -68,12 +138,20 @@ export default function AboutPage() {
                         </p>
 
                         <div className="space-y-4">
+                            <div>
+                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
+                                    Detailed Actions History
+                                </h3>
+                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
+                                    Actions history for each bill, showing all updates and changes over time.
+                                </p>
+                            </div>
                             <div className="border-l-4 border-blue-500 pl-4 py-2">
                                 <h3 className="font-semibold text-gray-800 dark:text-gray-200">
                                     📱 Mobile Optimizations
                                 </h3>
                                 <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Enhanced mobile experience for tracking legislation on the go
+                                    Enhanced mobile experience for tracking legislation
                                 </p>
                             </div>
 
@@ -103,16 +181,6 @@ export default function AboutPage() {
                                     Access to all available historical legislation beyond the current 10-month window
                                 </p>
                             </div>
-                            <div>
-
-                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
-                                    Detailed Actions History
-                                </h3>
-                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Actions history for each bill, showing all updates and changes over time.
-                                </p>
-                            </div>
-
                             <div className="border-l-4 border-red-500 pl-4 py-2">
                                 <h3 className="font-semibold text-gray-800 dark:text-gray-200">
                                     📊 Advanced Analytics
@@ -145,6 +213,12 @@ export default function AboutPage() {
                             government&apos;s actions. Check back regularly for updates and new features!
                         </p>
                     </section>
+
+                    <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700 text-center">
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                            Project created October 1, 2025
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>

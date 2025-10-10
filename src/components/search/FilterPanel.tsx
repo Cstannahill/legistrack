@@ -3,6 +3,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import {
     Select,
     SelectContent,
@@ -30,6 +31,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
     const currentStatus = searchParams.get('status')
     const currentCategory = searchParams.get('category')
     const currentCongress = searchParams.get('congress') || String(CURRENT_CONGRESS)
+    const showIncomplete = searchParams.get('showIncomplete') === 'true'
 
     const updateFilter = (key: string, value: string | null) => {
         const params = new URLSearchParams(searchParams.toString())
@@ -46,7 +48,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
         router.push('/bills')
     }
 
-    const hasActiveFilters = currentStatus || currentCategory || currentType !== 'ALL'
+    const hasActiveFilters = currentStatus || currentCategory || currentType !== 'ALL' || showIncomplete
 
     return (
         <div className="space-y-6">
@@ -62,8 +64,31 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                 </div>
             </div>
 
+            {/* Show Incomplete Bills Toggle - Only for bills
+            {currentType !== 'EXECUTIVE_ORDERS' && (
+                <div className="rounded-lg border bg-muted/50 p-4">
+                    <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                            <label htmlFor="show-incomplete" className="text-sm font-medium">
+                                Show Incomplete Bills
+                            </label>
+                            <p className="text-xs text-muted-foreground">
+                                Include bills without full text
+                            </p>
+                        </div>
+                        <Switch
+                            id="show-incomplete"
+                            checked={showIncomplete}
+                            onCheckedChange={(checked) => {
+                                updateFilter('showIncomplete', checked ? 'true' : null)
+                            }}
+                        />
+                    </div>
+                </div>
+            )} */}
+
             {/* Type Filter */}
-            <div>
+            {/* <div>
                 <label className="mb-2 block text-sm font-medium">Type</label>
                 <Select value={currentType} onValueChange={(value) => updateFilter('type', value === 'ALL' ? null : value)}>
                     <SelectTrigger>
@@ -77,7 +102,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                         ))}
                     </SelectContent>
                 </Select>
-            </div>
+            </div> */}
 
             {/* Congress Filter - Only for bills */}
             {currentType !== 'EXECUTIVE_ORDERS' && (
@@ -109,8 +134,8 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                             <button
                                 key={value}
                                 onClick={() => updateFilter('status', currentStatus === value ? null : value)}
-                                className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent ${currentStatus === value ? 'bg-accent font-medium' : ''
-                                    }`}
+                                aria-pressed={currentStatus === value}
+                                className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors duration-150 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:bg-accent/80 active:scale-[0.996] ${currentStatus === value ? 'bg-accent font-medium shadow-sm' : 'bg-transparent'} `}
                             >
                                 {label}
                             </button>
@@ -129,12 +154,12 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                             onClick={() =>
                                 updateFilter('category', currentCategory === category.slug ? null : category.slug)
                             }
-                            className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent ${currentCategory === category.slug ? 'bg-accent font-medium' : ''
-                                }`}
+                            aria-pressed={currentCategory === category.slug}
+                            className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors duration-150 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:bg-accent/80 active:scale-[0.996] ${currentCategory === category.slug ? 'bg-accent font-medium shadow-sm' : 'bg-transparent'}`}
                         >
                             {category.color && (
                                 <div
-                                    className="h-3 w-3 rounded-full"
+                                    className="h-3 w-3 rounded-full shrink-0"
                                     style={{ backgroundColor: category.color }}
                                 />
                             )}

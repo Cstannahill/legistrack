@@ -36,11 +36,14 @@ model Bill {
   votes          Vote[]
   categories     Category[]      @relation("BillCategories")
   cosponsors     Member[]        @relation("Cosponsored")
+  // Relations
+  trackings      BillTracking[]
 
   @@unique([congress, billType, billNumber])
   @@index([billType, billNumber])
   @@index([currentStatus])
   @@index([introducedDate])
+  @@index([introducedDate, id])
   @@index([congress])
 }
 
@@ -79,6 +82,8 @@ model ExecutiveOrder {
   categories         Category[]         @relation("ExecutiveOrderCategories")
 
   @@index([signingDate])
+  // Added composite index for stable ordered pagination (date + id)
+  @@index([signingDate, id])
 }
 
 model Summary {
@@ -213,12 +218,62 @@ model Action {
 model User {
   id                      String         @id @default(cuid())
   email                   String         @unique
+  username                String?        @unique
+  passwordHash            String?
   name                    String?
   emailVerified           Boolean        @default(false)
   notificationPreferences Json?
   createdAt               DateTime       @default(now())
   updatedAt               DateTime       @updatedAt
   subscriptions           Subscription[]
+  // Relations
+  notificationPreference  NotificationPreference?
+  billTrackings           BillTracking[]
+  notifications           Notification[]
+}
+
+model NotificationPreference {
+  id                   String  @id @default(cuid())
+  userId               String  @unique
+  notifyOnStatusChange Boolean @default(true)
+  notifyOnAllActions   Boolean @default(false)
+  emailNotifications   Boolean @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model BillTracking {
+  id        String   @id @default(cuid())
+  userId    String
+  billId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, billId])
+  @@index([userId])
+  @@index([billId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  data      Json?
+  read      Boolean  @default(false)
+  viaEmail   Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([createdAt])
 }
 
 model Subscription {
@@ -249,6 +304,24 @@ model JobRun {
   metadata       Json?
 
   @@index([jobName, startedAt])
+}
+
+/// Durable dead-letter table for items that repeatedly fail LLM processing.
+model DeadLetter {
+  id                String   @id @default(cuid())
+  payload           Json
+  errorMessage      String?
+  attempts          Int      @default(0)
+  billId            String?
+  executiveOrderId  String?
+  createdAt         DateTime @default(now())
+  lastAttemptAt     DateTime?
+  processed         Boolean  @default(false)
+  processedAt       DateTime?
+
+  @@index([billId])
+  @@index([executiveOrderId])
+  @@index([processed, createdAt])
 }
 
 enum BillStatus {
