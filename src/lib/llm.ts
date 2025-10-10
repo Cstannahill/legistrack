@@ -2,23 +2,20 @@ import { z } from "zod";
 import llmRedis from "@/lib/llmRedis";
 import { db } from "@/lib/db";
 import OpenAI from "openai";
-
-function getEnvKeys(prefix: string, count = 5): string[] {
-  const keys: string[] = [];
-  for (let i = 1; i <= count; i++) {
-    const val = process.env[`${prefix}_${i}`];
-    if (val) keys.push(val.trim());
+const OPENROUTER_KEYS = (() => {
+  const keys = [];
+  for (let i = 1; i <= 5; i++) {
+    const k = process.env[`OPENROUTER_API_KEY_${i}`];
+    if (k) keys.push(k.trim());
   }
   if (keys.length === 0) {
     console.warn(
-      `[WARN] No ${prefix} keys found. Available env keys:`,
-      Object.keys(process.env).filter((k) => k.includes(prefix))
+      "[WARN] No OPENROUTER_API_KEY_* found in process.env. If running on Vercel Edge, enable 'Expose to Edge Functions' in Vercel Dashboard."
     );
   }
   return keys;
-}
+})();
 
-const OPENROUTER_KEYS = getEnvKeys("OPENROUTER_API_KEY");
 if (process.env.VERCEL_ENV) {
   console.log(
     "[Runtime ENV]",
