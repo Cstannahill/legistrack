@@ -33,6 +33,7 @@ let keyIndex = 0;
 export const LLMResponseSchema = z.object({
   summary: z.string().min(1),
   keyPoints: z.array(z.string()).optional().default([]),
+  impactAreas: z.array(z.string()).optional().default([]),
   categories: z.array(z.string()).optional().default([]),
   aiModel: z.string().optional().default(MODEL),
   confidence: z.number().min(0).max(1).optional(),
@@ -48,21 +49,45 @@ function buildPrompt(
   const catList = categories
     .map(
       (c, i) =>
-        `${i + 1}. ${c.name}${
+        `${i + 1}. ${c.name} (slug: ${c.slug})${
           c.description ? ` - ${c.description}` : ""
-        } (slug: ${c.slug})`
+        }`
     )
     .join("\n");
 
-  const user = `Categories:\n${catList}\n\nTitle: ${title}\nText: ${
-    text ? text : "(no text provided)"
-  }\n\nReturn EXACTLY a single valid JSON object with the following keys:\n{\n  \"summary\": string (2-4 sentences),\n  \"keyPoints\": [string],\n  \"categories\": [string] (array of category slugs, max 3),\n  \"aiModel\": string,\n  \"confidence\": number (0-1) OPTIONAL\n}\nRespond with ONLY the JSON object and nothing else.`;
+  const user = `You are analyzing legislation for categorization and summarization.
+
+Available Categories:
+${catList}
+
+Legislation Details:
+Title: ${title}
+Text: ${text || "(no text provided)"}
+
+CRITICAL REQUIREMENTS:
+1. Your response MUST be valid JSON only
+2. The 'content' field must be at least 20 words
+3. The 'keyPoints' array must contain at least 3 meaningful points, each at least 10 words
+4. The 'impactAreas' array should describe who/what is affected
+5. Select UP TO 3 most relevant category slugs from the list above
+
+Response Schema:
+{
+  "summary": "string (minimum 20 words - a comprehensive summary)",
+  "keyPoints": ["string", "string", ...] (array of detailed points, each 10+ words),
+  "impactAreas": ["string", "string", ...] (who/what is affected),
+  "categories": ["slug1", "slug2", "slug3"] (max 3 slugs from the provided list),
+  "aiModel": "string",
+  "confidence": number (0-1, optional)
+}
+
+RESPOND WITH ONLY THE JSON OBJECT. NO MARKDOWN. NO EXPLANATIONS.`;
 
   return [
     {
       role: "system",
       content:
-        "You are an expert legislative summarizer and categorizer. Produce concise summaries and choose the most relevant categories. Output only valid JSON.",
+        "You are an expert legislative analyst. Provide thorough, accurate analysis in strict JSON format.",
     },
     { role: "user", content: user },
   ];
