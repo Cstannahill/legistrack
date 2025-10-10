@@ -12,21 +12,9 @@ import OpenAI from "openai";
 import { SUMMARIZATION_PROMPTS } from "./prompts";
 import type { SummaryType } from "@prisma/client";
 
-const OPENROUTER_KEYS = (
-  process.env.OPENROUTER_KEYS ||
-  process.env.OPENROUTER_KEY ||
-  [
-    process.env.OPENROUTER_API_KEY_1,
-    process.env.OPENROUTER_API_KEY_2,
-    process.env.OPENROUTER_API_KEY_3,
-  ]
-    .filter(Boolean)
-    .join(",") ||
-  ""
-)
-  .split(",")
-  .map((k) => k.trim())
-  .filter(Boolean);
+import { getOpenRouterKeys } from "@/lib/openrouter-keys";
+
+const OPENROUTER_KEYS = getOpenRouterKeys(); // will throw if none found
 
 // Model configurations
 const OPENROUTER_MODELS = {
