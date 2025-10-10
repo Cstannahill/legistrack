@@ -44,7 +44,7 @@ export type OpenRouterModel = keyof typeof OPENROUTER_MODELS;
 
 // Initialize OpenRouter client (uses OpenAI SDK with custom base URL)
 const openrouter = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
+  apiKey: process.env.OPENROUTER_API_KEY_3,
   baseURL: "https://openrouter.ai/api/v1",
 });
 
@@ -70,12 +70,12 @@ export async function generateSummaryOpenRouter({
   title,
   fullText,
   summaryType,
-  model = "deepseek",
+  model = "qwen",
 }: GenerateSummaryParams): Promise<SummaryResponse> {
   const modelConfig = OPENROUTER_MODELS[model];
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY environment variable is not set");
+  if (!process.env.OPENROUTER_API_KEY_3) {
+    throw new Error("OPENROUTER_API_KEY_3 environment variable is not set");
   }
 
   try {
