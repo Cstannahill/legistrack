@@ -1,7 +1,8 @@
 // Bills List Page
 import { Suspense } from 'react'
 import { db } from '@/lib/db'
-import { BillList } from '@/components/bills/BillList'
+// import { BillList } from '@/components/bills/BillList'
+import { ImprovedBillList } from '@/components/bills/ImprovedBillList'
 import { SearchBar } from '@/components/search/SearchBar'
 import { FilterPanel } from '@/components/search/FilterPanel'
 import { MobileFilterDrawer } from '@/components/search/MobileFilterDrawer'
@@ -372,7 +373,7 @@ export default async function BillsPage({ searchParams }: PageProps) {
                                     {page < totalPages && <a href={`?${new URLSearchParams({ ...params, page: String(page + 1) }).toString()}`} className="rounded-md border px-4 py-2 text-sm hover:bg-accent">Next</a>}
                                 </div>
                             )}
-                            <Suspense fallback={<BillList items={[]} loading />}> <BillList items={unifiedItems} /> </Suspense>
+                            <Suspense fallback={<ImprovedBillList items={[]} loading />}> <ImprovedBillList items={unifiedItems} /> </Suspense>
                             {totalPages > 1 && (
                                 <div className="mt-8 flex items-center justify-center gap-2">
                                     {page > 1 && <a href={`?${new URLSearchParams({ ...params, page: String(page - 1) }).toString()}`} className="rounded-md border px-4 py-2 text-sm hover:bg-accent">Previous</a>}
@@ -577,8 +578,8 @@ export default async function BillsPage({ searchParams }: PageProps) {
                         </div>
                     )}
 
-                    <Suspense fallback={<BillList items={[]} loading />}>
-                        <BillList items={items} />
+                    <Suspense fallback={<ImprovedBillList items={[]} loading />}>
+                        <ImprovedBillList items={items} />
                     </Suspense>
 
                     {/* Pagination - Bottom */}
