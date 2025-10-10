@@ -85,7 +85,6 @@ async function selectSingleItemToProcess() {
   const categories = await db.category.findMany({
     select: { id: true, name: true, slug: true, description: true },
   });
-
   // Helper functions to map DB rows
   function mapBillRowToItem(b: any) {
     return {
@@ -100,7 +99,6 @@ async function selectSingleItemToProcess() {
       },
     };
   }
-
   function mapEOToItem(e: any) {
     return {
       id: e.id,
@@ -160,7 +158,6 @@ async function selectSingleItemToProcess() {
       item: mapEOToItem(recentEO),
     };
   }
-
   // FALLBACK A: Any bill/EO with fullText but no summary (ignore date)
   const anyBill = await db.bill.findFirst({
     where: {
@@ -188,6 +185,7 @@ async function selectSingleItemToProcess() {
       item: mapBillRowToItem(anyBill),
     };
   }
+
 
   const anyEO = await db.executiveOrder.findFirst({
     where: {
