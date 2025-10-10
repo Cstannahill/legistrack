@@ -4,14 +4,6 @@ import llm from "@/lib/llm";
 import type { LLMResponse } from "@/lib/llm";
 import { enrichBillFromCongress } from "@/lib/api/congress-detail";
 import { subDays } from "date-fns";
-console.log("[ENV DEBUG] VERCEL_ENV:", process.env.VERCEL_ENV);
-console.log("[ENV DEBUG] VERCEL:", process.env.VERCEL);
-console.log(
-  "[ENV DEBUG] visible OPENROUTER keys:",
-  Object.keys(process.env).filter(
-    (k) => k.includes("OPENROUTER_API_KEY") || k === "OPENROUTER_API_KEYS"
-  )
-);
 
 // Hardcoded categories for efficient lookup
 const CATEGORY_MAP = {
@@ -117,7 +109,7 @@ export const batchSummarizeBillsJob = inngest.createFunction(
             introducedDate: { gte: lookbackDate },
             OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
           },
-          take: 50, // Reduced for API rate limiting
+          take: 10, // Reduced for API rate limiting
           orderBy: { introducedDate: "desc" },
           select: {
             id: true,
