@@ -1,7 +1,6 @@
 import { inngest } from "@/inngest/client";
 import { db } from "@/lib/db";
 import llm from "@/lib/llm";
-import { enqueuePayload } from "@/lib/llmRedis";
 import type { LLMResponse } from "@/lib/llm";
 import { enrichBillFromCongress } from "@/lib/api/congress-detail";
 import { subDays } from "date-fns";
@@ -25,21 +24,14 @@ const CATEGORY_MAP = {
   veterans: "cmg7fytc4000evg6kivpvt0hv",
 } as const;
 
-/**
- * Validate LLM response structure and content quality
- */
 interface ValidationResult {
   isValid: boolean;
   errors: string[];
 }
 
-/**
- * Validate LLM response structure and content quality
- */
 function validateLLMResponse(response: LLMResponse): ValidationResult {
   const errors: string[] = [];
 
-  // Validate content
   if (!response.summary || typeof response.summary !== "string") {
     errors.push("Missing or invalid 'summary' field");
   } else {
@@ -49,7 +41,6 @@ function validateLLMResponse(response: LLMResponse): ValidationResult {
     }
   }
 
-  // Validate keyPoints
   if (!Array.isArray(response.keyPoints)) {
     errors.push("Missing or invalid 'keyPoints' array");
   } else if (response.keyPoints.length === 0) {
@@ -62,7 +53,6 @@ function validateLLMResponse(response: LLMResponse): ValidationResult {
     });
   }
 
-  // Validate impactAreas
   if (response.impactAreas && response.impactAreas.length > 0) {
     response.impactAreas.forEach((area, idx) => {
       if (typeof area !== "string" || area.trim().length < 5) {
@@ -71,7 +61,6 @@ function validateLLMResponse(response: LLMResponse): ValidationResult {
     });
   }
 
-  // Validate categories
   if (response.categories && Array.isArray(response.categories)) {
     const invalidCategories = response.categories.filter(
       (slug) => !(slug in CATEGORY_MAP)
@@ -87,480 +76,403 @@ function validateLLMResponse(response: LLMResponse): ValidationResult {
   };
 }
 
-export const batchSummarizeBillsJob = inngest.createFunction(
-  {
-    id: "batch-summarize-bills",
-    name: "Batch Summarize Bills",
-    retries: 2,
-  },
-  { cron: "0 */1 * * *" },
-  async ({ step }) => {
-    const lookbackDate = subDays(new Date(), 3);
+/**
+ * Select a single bill/EO that needs processing using fallback logic
+ */
+async function selectSingleItemToProcess() {
+  const lookbackDate = subDays(new Date(), 3);
 
-    // Step 1: Select bills needing summarization
-    const itemsToProcess = await step.run(
-      "select-recent-unprocessed",
-      async () => {
-        const categories = await db.category.findMany({
-          select: { id: true, name: true, slug: true, description: true },
-        });
+  const categories = await db.category.findMany({
+    select: { id: true, name: true, slug: true, description: true },
+  });
 
-        // Helper: map DB rows into the item shape we expect downstream
-        function mapBillRowToItem(b: any) {
-          return {
-            id: b.id,
-            type: "bill" as const,
-            title: b.title,
-            text: b.fullText,
-            meta: {
-              billType: b.billType,
-              billNumber: b.billNumber,
-              congress: b.congress,
-            },
-          };
-        }
-        function mapEOToItem(e: any) {
-          return {
-            id: e.id,
-            type: "executive-order" as const,
-            title: e.title,
-            text: e.fullText,
-            meta: { orderNumber: e.orderNumber },
-          };
-        }
-
-        // Primary attempt: recent items WITH fullText (so we can process immediately)
-        const primaryLookbackBills = await db.bill.findMany({
-          where: {
-            introducedDate: { gte: lookbackDate },
-            AND: [
-              { fullText: { not: null } }, // require full text present
-              {
-                OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
-              },
-            ],
-          },
-          take: 50,
-          orderBy: { introducedDate: "desc" },
-          select: {
-            id: true,
-            billType: true,
-            billNumber: true,
-            congress: true,
-            title: true,
-            fullText: true,
-          },
-        });
-
-        const primaryLookbackEOs = await db.executiveOrder.findMany({
-          where: {
-            signingDate: { gte: lookbackDate },
-            AND: [
-              { fullText: { not: null } },
-              {
-                OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
-              },
-            ],
-          },
-          take: 50,
-          orderBy: { signingDate: "desc" },
-          select: { id: true, orderNumber: true, title: true, fullText: true },
-        });
-
-        const billItems = primaryLookbackBills.map(mapBillRowToItem);
-        const eoItems = primaryLookbackEOs.map(mapEOToItem);
-
-        // If we already have up to 50 items (combined), return those
-        let combined = [...billItems, ...eoItems].slice(0, 50);
-        if (combined.length > 0) {
-          return {
-            categories: categories.map((c) => ({
-              slug: c.slug,
-              name: c.name,
-              description: c.description ?? undefined,
-            })),
-            items: combined,
-          };
-        }
-
-        // FALLBACK A: Look for ANY bill/EO in DB that has fullText and no summary (ignore date window)
-        // This finds older items that were enriched previously but never summarized.
-        const fallbackAnyBills = await db.bill.findMany({
-          where: {
-            fullText: { not: null },
-            OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
-          },
-          take: 50,
-          orderBy: { introducedDate: "desc" },
-          select: {
-            id: true,
-            billType: true,
-            billNumber: true,
-            congress: true,
-            title: true,
-            fullText: true,
-          },
-        });
-
-        const fallbackAnyEOs = await db.executiveOrder.findMany({
-          where: {
-            fullText: { not: null },
-            OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
-          },
-          take: 50,
-          orderBy: { signingDate: "desc" },
-          select: { id: true, orderNumber: true, title: true, fullText: true },
-        });
-
-        combined = [
-          ...fallbackAnyBills.map(mapBillRowToItem),
-          ...fallbackAnyEOs.map(mapEOToItem),
-        ].slice(0, 50);
-
-        if (combined.length > 0) {
-          return {
-            categories: categories.map((c) => ({
-              slug: c.slug,
-              name: c.name,
-              description: c.description ?? undefined,
-            })),
-            items: combined,
-          };
-        }
-
-        // FALLBACK B: widen the lookback (e.g., another 90 days back) and try again
-        const widenedLookback = subDays(lookbackDate, 90);
-
-        const widenedBills = await db.bill.findMany({
-          where: {
-            introducedDate: { gte: widenedLookback },
-            AND: [
-              { fullText: { not: null } },
-              {
-                OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
-              },
-            ],
-          },
-          take: 50,
-          orderBy: { introducedDate: "desc" },
-          select: {
-            id: true,
-            billType: true,
-            billNumber: true,
-            congress: true,
-            title: true,
-            fullText: true,
-          },
-        });
-
-        const widenedEOs = await db.executiveOrder.findMany({
-          where: {
-            signingDate: { gte: widenedLookback },
-            AND: [
-              { fullText: { not: null } },
-              {
-                OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
-              },
-            ],
-          },
-          take: 50,
-          orderBy: { signingDate: "desc" },
-          select: { id: true, orderNumber: true, title: true, fullText: true },
-        });
-
-        combined = [
-          ...widenedBills.map(mapBillRowToItem),
-          ...widenedEOs.map(mapEOToItem),
-        ].slice(0, 50);
-
-        // Final: return whatever we found (may be empty)
-        return {
-          categories: categories.map((c) => ({
-            slug: c.slug,
-            name: c.name,
-            description: c.description ?? undefined,
-          })),
-          items: combined,
-        };
-      }
-    );
-
-    // Step 2: Enrich bills with full text from Congress API
-    const enrichmentResults = await step.run(
-      "enrich-bills-from-congress",
-      async () => {
-        const results = [];
-
-        for (const item of itemsToProcess.items) {
-          if (item.type === "bill" && !item.text) {
-            const result = await enrichBillFromCongress(item.id);
-            results.push({ id: item.id, ...result });
-
-            // Rate limiting
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-          }
-        }
-
-        return results;
-      }
-    );
-
-    // Step 3: Refresh items with enriched data
-    const enrichedItems = await step.run("refresh-item-data", async () => {
-      const refreshed = [];
-
-      for (const item of itemsToProcess.items) {
-        if (item.type === "bill") {
-          const fresh = await db.bill.findUnique({
-            where: { id: item.id },
-            select: {
-              fullText: true,
-              summaries: { take: 1 },
-              categories: { take: 1 },
-            },
-          });
-
-          if (fresh) {
-            refreshed.push({
-              ...item,
-              text: fresh.fullText,
-              needsProcessing:
-                fresh.fullText &&
-                (!fresh.summaries || fresh.summaries.length === 0),
-            });
-          }
-        } else {
-          refreshed.push({ ...item, needsProcessing: !!item.text });
-        }
-      }
-
-      return refreshed.filter((i) => i.needsProcessing);
-    });
-
-    // Step 4: Summarize with LLM
-    const summarizationResults = await step.run(
-      "summarize-with-llm",
-      async () => {
-        const results: Array<{
-          id: string;
-          type: string;
-          summaryId?: string | null;
-          categoriesApplied: number;
-        }> = [];
-        const retryQueue: Array<{ item: any; errors: string[] }> = [];
-
-        // helper: per-call timeout
-        function timeoutPromise<T>(
-          ms: number,
-          p: Promise<T>,
-          label = "timeout"
-        ) {
-          return new Promise<T>((resolve, reject) => {
-            const t = setTimeout(() => {
-              reject(new Error(`${label} after ${ms}ms`));
-            }, ms);
-            p.then((v) => {
-              clearTimeout(t);
-              resolve(v);
-            }).catch((e) => {
-              clearTimeout(t);
-              reject(e);
-            });
-          });
-        }
-
-        // helper: small sleep to avoid bursts
-        const sleepMs = 300; // adjust as desired
-        const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-        for (const item of enrichedItems) {
-          if (!item.text) continue;
-
-          try {
-            // Per-item: attempt the LLM call with a timeout so one slow call doesn't stall everything
-            const response = await timeoutPromise(
-              45_000, // 45s timeout per LLM call (tune if needed)
-              llm.summarizeAndCategorize({
-                title: item.title,
-                text: item.text,
-                categories: itemsToProcess.categories,
-                billId: item.type === "bill" ? item.id : undefined,
-                executiveOrderId:
-                  item.type === "executive-order" ? item.id : undefined,
-              }),
-              "llm.summarizeAndCategorize"
-            );
-
-            // Validate response structure and content quality
-            const validation = validateLLMResponse(response);
-
-            if (!validation.isValid) {
-              console.warn(
-                `LLM response validation failed for ${item.id}:`,
-                validation.errors
-              );
-
-              // If validation fails, enqueue for later re-run (so human can inspect or re-run)
-              retryQueue.push({
-                item,
-                errors: validation.errors,
-              });
-
-              // Optionally enqueue payload for later automated processing
-              try {
-                await enqueuePayload?.({
-                  title: item.title,
-                  text: item.text,
-                  categories: itemsToProcess.categories,
-                  billId: item.type === "bill" ? item.id : null,
-                  executiveOrderId:
-                    item.type === "executive-order" ? item.id : null,
-                });
-              } catch (e) {
-                console.error(
-                  "Failed to enqueue invalid/failed item",
-                  item.id,
-                  e
-                );
-              }
-
-              // wait a bit before next item
-              await sleep(sleepMs);
-              continue;
-            }
-
-            // Create summary record immediately
-            const summaryRecord = await db.summary.create({
-              data: {
-                billId: item.type === "bill" ? item.id : null,
-                impactAreas: response.impactAreas || [],
-                executiveOrderId:
-                  item.type === "executive-order" ? item.id : null,
-                summaryType: "STANDARD",
-                content: response.summary,
-                keyPoints: response.keyPoints || [],
-                aiModel: response.aiModel,
-                confidence: response.confidence,
-                generatedAt: new Date(),
-              },
-            });
-
-            // Connect categories (limit to known ones and to max 3)
-            if (response.categories && response.categories.length > 0) {
-              const validCategories = (response.categories as string[])
-                .filter((slug: string) => slug in CATEGORY_MAP)
-                .slice(0, 3); // Max 3 categories
-
-              const categoryIds = validCategories.map((slug: string) => ({
-                id: CATEGORY_MAP[slug as keyof typeof CATEGORY_MAP],
-              }));
-
-              if (categoryIds.length > 0) {
-                try {
-                  if (item.type === "bill") {
-                    await db.bill.update({
-                      where: { id: item.id },
-                      data: { categories: { connect: categoryIds } },
-                    });
-                  } else {
-                    await db.executiveOrder.update({
-                      where: { id: item.id },
-                      data: { categories: { connect: categoryIds } },
-                    });
-                  }
-                } catch (updErr) {
-                  console.error(
-                    `Failed to connect categories for ${item.id}:`,
-                    updErr
-                  );
-                }
-              }
-            }
-
-            // Push to results
-            results.push({
-              id: item.id,
-              type: item.type,
-              summaryId: summaryRecord.id,
-              categoriesApplied: response.categories?.length || 0,
-            });
-
-            // small cooldown before next request to reduce rate-limit chances
-            await sleep(sleepMs);
-          } catch (error: any) {
-            console.error(`Error processing item ${item.id}:`, error);
-
-            // If the LLM itself returned an ENQUEUED indicator, treat as enqueued
-            if (error?.code === "ENQUEUED") {
-              console.log(`Item ${item.id} enqueued for later processing`);
-              retryQueue.push({
-                item,
-                errors: [String(error)],
-              });
-              continue;
-            }
-
-            // If timeout or network/LLM error, enqueue item for later processing
-            try {
-              await enqueuePayload?.({
-                title: item.title,
-                text: item.text,
-                categories: itemsToProcess.categories,
-                billId: item.type === "bill" ? item.id : null,
-                executiveOrderId:
-                  item.type === "executive-order" ? item.id : null,
-              });
-              retryQueue.push({
-                item,
-                errors: [String(error)],
-              });
-              console.log(`Enqueued ${item.id} after error: ${String(error)}`);
-            } catch (enqueueErr) {
-              // If enqueue failed, add to retryQueue with the error
-              console.error(
-                "Failed to enqueue after error for item",
-                item.id,
-                enqueueErr
-              );
-              retryQueue.push({
-                item,
-                errors: [String(error), String(enqueueErr)],
-              });
-            }
-          }
-        } // end for loop
-
-        return { results, retryQueue };
-      }
-    );
-
-    // Step 5: Log completion
-    await step.run("log-batch-job", async () => {
-      await db.jobRun.create({
-        data: {
-          jobName: "batch-summarize-bills",
-          status: "COMPLETED",
-          itemsProcessed: summarizationResults.results.length,
-          itemsFailed: summarizationResults.retryQueue.length,
-          startedAt: new Date(),
-          completedAt: new Date(),
-          metadata: {
-            itemsFound: itemsToProcess.items.length,
-            enriched: enrichmentResults.filter((r) => r.hasText).length,
-            validated: summarizationResults.results.length,
-            failed: summarizationResults.retryQueue.length,
-          },
-        },
-      });
-    });
-
+  // Helper functions to map DB rows
+  function mapBillRowToItem(b: any) {
     return {
-      message: "Batch summarization completed",
-      itemsFound: itemsToProcess.items.length,
-      itemsEnriched: enrichmentResults.filter((r) => r.hasText).length,
-      itemsProcessed: summarizationResults.results.length,
-      itemsFailed: summarizationResults.retryQueue.length,
-      results: summarizationResults.results,
+      id: b.id,
+      type: "bill" as const,
+      title: b.title,
+      text: b.fullText,
+      meta: {
+        billType: b.billType,
+        billNumber: b.billNumber,
+        congress: b.congress,
+      },
     };
   }
-);
+
+  function mapEOToItem(e: any) {
+    return {
+      id: e.id,
+      type: "executive-order" as const,
+      title: e.title,
+      text: e.fullText,
+      meta: { orderNumber: e.orderNumber },
+    };
+  }
+
+  // PRIMARY: Recent items WITH fullText (last 3 days)
+  const recentBill = await db.bill.findFirst({
+    where: {
+      introducedDate: { gte: lookbackDate },
+      fullText: { not: null },
+      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+    },
+    orderBy: { introducedDate: "desc" },
+    select: {
+      id: true,
+      billType: true,
+      billNumber: true,
+      congress: true,
+      title: true,
+      fullText: true,
+    },
+  });
+
+  if (recentBill) {
+    return {
+      categories: categories.map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        description: c.description ?? undefined,
+      })),
+      item: mapBillRowToItem(recentBill),
+    };
+  }
+
+  const recentEO = await db.executiveOrder.findFirst({
+    where: {
+      signingDate: { gte: lookbackDate },
+      fullText: { not: null },
+      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+    },
+    orderBy: { signingDate: "desc" },
+    select: { id: true, orderNumber: true, title: true, fullText: true },
+  });
+
+  if (recentEO) {
+    return {
+      categories: categories.map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        description: c.description ?? undefined,
+      })),
+      item: mapEOToItem(recentEO),
+    };
+  }
+
+  // FALLBACK A: Any bill/EO with fullText but no summary (ignore date)
+  const anyBill = await db.bill.findFirst({
+    where: {
+      fullText: { not: null },
+      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+    },
+    orderBy: { introducedDate: "desc" },
+    select: {
+      id: true,
+      billType: true,
+      billNumber: true,
+      congress: true,
+      title: true,
+      fullText: true,
+    },
+  });
+
+  if (anyBill) {
+    return {
+      categories: categories.map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        description: c.description ?? undefined,
+      })),
+      item: mapBillRowToItem(anyBill),
+    };
+  }
+
+  const anyEO = await db.executiveOrder.findFirst({
+    where: {
+      fullText: { not: null },
+      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+    },
+    orderBy: { signingDate: "desc" },
+    select: { id: true, orderNumber: true, title: true, fullText: true },
+  });
+
+  if (anyEO) {
+    return {
+      categories: categories.map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        description: c.description ?? undefined,
+      })),
+      item: mapEOToItem(anyEO),
+    };
+  }
+
+  // FALLBACK B: Widen lookback to 93 days (3 months)
+  const widenedLookback = subDays(lookbackDate, 90);
+
+  const widenedBill = await db.bill.findFirst({
+    where: {
+      introducedDate: { gte: widenedLookback },
+      fullText: { not: null },
+      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+    },
+    orderBy: { introducedDate: "desc" },
+    select: {
+      id: true,
+      billType: true,
+      billNumber: true,
+      congress: true,
+      title: true,
+      fullText: true,
+    },
+  });
+
+  if (widenedBill) {
+    return {
+      categories: categories.map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        description: c.description ?? undefined,
+      })),
+      item: mapBillRowToItem(widenedBill),
+    };
+  }
+
+  const widenedEO = await db.executiveOrder.findFirst({
+    where: {
+      signingDate: { gte: widenedLookback },
+      fullText: { not: null },
+      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+    },
+    orderBy: { signingDate: "desc" },
+    select: { id: true, orderNumber: true, title: true, fullText: true },
+  });
+
+  if (widenedEO) {
+    return {
+      categories: categories.map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        description: c.description ?? undefined,
+      })),
+      item: mapEOToItem(widenedEO),
+    };
+  }
+
+  // Nothing found
+  return null;
+}
+
+/**
+ * Process a single item with validation and error handling
+ */
+async function processSingleItem(
+  item: any,
+  categories: any[],
+  apiKey: string,
+  jobName: string
+): Promise<{
+  success: boolean;
+  summaryId?: string;
+  categoriesApplied: number;
+  error?: string;
+}> {
+  if (!item.text) {
+    return {
+      success: false,
+      categoriesApplied: 0,
+      error: "No text available",
+    };
+  }
+
+  try {
+    // Call LLM with specific API key
+    const response = await llm.summarizeAndCategorizeWithKey({
+      title: item.title,
+      text: item.text,
+      categories,
+      billId: item.type === "bill" ? item.id : undefined,
+      executiveOrderId: item.type === "executive-order" ? item.id : undefined,
+      apiKey,
+    });
+
+    // Validate response
+    const validation = validateLLMResponse(response);
+    if (!validation.isValid) {
+      console.warn(
+        `[${jobName}] LLM response validation failed for ${item.id}:`,
+        validation.errors
+      );
+      return {
+        success: false,
+        categoriesApplied: 0,
+        error: `Validation failed: ${validation.errors.join(", ")}`,
+      };
+    }
+
+    // Create summary record
+    const summaryRecord = await db.summary.create({
+      data: {
+        billId: item.type === "bill" ? item.id : null,
+        executiveOrderId: item.type === "executive-order" ? item.id : null,
+        summaryType: "STANDARD",
+        content: response.summary,
+        keyPoints: response.keyPoints || [],
+        impactAreas: response.impactAreas || [],
+        aiModel: response.aiModel,
+        confidence: response.confidence,
+        generatedAt: new Date(),
+      },
+    });
+
+    // Connect categories (max 3)
+    let categoriesApplied = 0;
+    if (response.categories && response.categories.length > 0) {
+      const validCategories = (response.categories as string[])
+        .filter((slug: string) => slug in CATEGORY_MAP)
+        .slice(0, 3);
+
+      const categoryIds = validCategories.map((slug: string) => ({
+        id: CATEGORY_MAP[slug as keyof typeof CATEGORY_MAP],
+      }));
+
+      if (categoryIds.length > 0) {
+        try {
+          if (item.type === "bill") {
+            await db.bill.update({
+              where: { id: item.id },
+              data: { categories: { connect: categoryIds } },
+            });
+          } else {
+            await db.executiveOrder.update({
+              where: { id: item.id },
+              data: { categories: { connect: categoryIds } },
+            });
+          }
+          categoriesApplied = categoryIds.length;
+        } catch (updErr) {
+          console.error(
+            `[${jobName}] Failed to connect categories for ${item.id}:`,
+            updErr
+          );
+        }
+      }
+    }
+
+    return {
+      success: true,
+      summaryId: summaryRecord.id,
+      categoriesApplied,
+    };
+  } catch (error: any) {
+    console.error(`[${jobName}] Error processing item ${item.id}:`, error);
+    return {
+      success: false,
+      categoriesApplied: 0,
+      error: String(error),
+    };
+  }
+}
+
+/**
+ * Create a single bill processor job
+ */
+function createProcessorJob(jobNumber: 1 | 2 | 3, cronMinute: 0 | 20 | 40) {
+  const jobId = `single-bill-processor-${jobNumber}`;
+  const jobName = `Single Bill Processor ${jobNumber}`;
+  const apiKeyEnvVar = `OPENROUTER_API_KEY_${jobNumber}`;
+
+  return inngest.createFunction(
+    {
+      id: jobId,
+      name: jobName,
+      retries: 1,
+    },
+    { cron: `${cronMinute} */1 * * *` }, // Every hour at specified minute
+    async ({ step }) => {
+      const apiKey = process.env[apiKeyEnvVar];
+
+      if (!apiKey) {
+        throw new Error(`${apiKeyEnvVar} not configured`);
+      }
+
+      // Step 1: Select single item to process
+      const selection = await step.run("select-item", async () => {
+        return await selectSingleItemToProcess();
+      });
+
+      if (!selection) {
+        return {
+          message: "No items found to process",
+          processed: false,
+        };
+      }
+
+      const { item, categories } = selection;
+
+      // Step 2: Enrich if needed (bills only)
+      if (item.type === "bill" && !item.text) {
+        await step.run("enrich-from-congress", async () => {
+          const result = await enrichBillFromCongress(item.id);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          return result;
+        });
+
+        // Refresh item data after enrichment
+        const fresh = await db.bill.findUnique({
+          where: { id: item.id },
+          select: { fullText: true },
+        });
+
+        if (fresh?.fullText) {
+          item.text = fresh.fullText;
+        }
+      }
+
+      // Step 3: Process the item
+      const result = await step.run("process-item", async () => {
+        return await processSingleItem(item, categories, apiKey, jobName);
+      });
+
+      // Step 4: Log the job run
+      await step.run("log-job-run", async () => {
+        await db.jobRun.create({
+          data: {
+            jobName: jobId,
+            status: result.success ? "COMPLETED" : "FAILED",
+            itemsProcessed: result.success ? 1 : 0,
+            itemsFailed: result.success ? 0 : 1,
+            startedAt: new Date(),
+            completedAt: new Date(),
+            metadata: {
+              itemId: item.id,
+              itemType: item.type,
+              summaryId: result.summaryId,
+              categoriesApplied: result.categoriesApplied,
+              error: result.error,
+            },
+          },
+        });
+      });
+
+      return {
+        message: result.success
+          ? `Successfully processed ${item.type} ${item.id}`
+          : `Failed to process ${item.type} ${item.id}`,
+        itemId: item.id,
+        itemType: item.type,
+        success: result.success,
+        summaryId: result.summaryId,
+        categoriesApplied: result.categoriesApplied,
+        error: result.error,
+      };
+    }
+  );
+}
+
+// Export all three processor jobs
+export const singleBillProcessor1 = createProcessorJob(1, 0); // Runs at :00
+export const singleBillProcessor2 = createProcessorJob(2, 20); // Runs at :20
+export const singleBillProcessor3 = createProcessorJob(3, 40); // Runs at :40

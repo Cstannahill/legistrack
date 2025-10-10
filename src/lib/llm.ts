@@ -4,12 +4,13 @@ import { db } from "@/lib/db";
 import OpenAI from "openai";
 import { getOpenRouterKeys } from "@/lib/openrouter-keys";
 
-const OPENROUTER_API_KEYS = getOpenRouterKeys(); // will throw if none found
+const OPENROUTER_API_KEYS = getOpenRouterKeys();
 
 type OpenRouterMessage = {
   role: "system" | "user" | "assistant";
   content: string;
 };
+
 if (OPENROUTER_API_KEYS.length === 0) {
   console.warn(
     "WARNING: No OPENROUTER_API_KEYS configured. LLM calls will fail until keys are provided."
@@ -45,20 +46,9 @@ const OPENROUTER_MODELS = {
 
 export type OpenRouterModel = keyof typeof OPENROUTER_MODELS;
 
-// Initialize OpenRouter client (uses OpenAI SDK with custom base URL)
-const openrouter = new OpenAI({
-  apiKey:
-    OPENROUTER_API_KEYS.length > 0
-      ? OPENROUTER_API_KEYS[
-          Math.floor(Math.random() * OPENROUTER_API_KEYS.length)
-        ]
-      : undefined,
-  baseURL: "https://openrouter.ai/api/v1",
-});
 const MODEL = process.env.OPENROUTER_MODEL || process.env.AI_MODEL || "qwen";
 
 let keyIndex = 0;
-// round-robin pointer is stored in `keyIndex` and advanced when a reservation is made.
 
 // Zod schema for the expected LLM response
 export const LLMResponseSchema = z.object({
@@ -128,28 +118,25 @@ async function callOpenRouterWithKey(
   apiKey: string,
   messages: OpenRouterMessage[]
 ): Promise<string> {
-  // ensure we index OPENROUTER_MODELS safely
   const modelConfig =
     OPENROUTER_MODELS[MODEL as keyof typeof OPENROUTER_MODELS];
 
+  const openrouter = new OpenAI({
+    apiKey,
+    baseURL: "https://openrouter.ai/api/v1",
+  });
+
   try {
-    // The OpenRouter SDK often accepts the same shape as the REST API, but
-    // its types may require ChatCompletionMessageParam[].
-    // Easiest fix here: assert messages into any to satisfy the SDK typing.
-    // If you prefer stricter typing, see the "optional improvements" section below.
     const completion = await openrouter.chat.completions.create(
       {
         model: modelConfig.id,
-        // cast to any to satisfy the SDK's stricter message type expectation
         messages: messages as any,
         temperature: 0.3,
         max_tokens: 4000,
       },
       {
-        // include OpenRouter-specific headers and the API key
         headers: {
           Authorization: `Bearer ${apiKey}`,
-          // use nullish coalescing to satisfy TS: expression will always be string
           "HTTP-Referer":
             process.env.SITE_URL ?? "https://legistrack.vercel.app",
           "X-Title": "Legislation Tracker - Bill Summarization",
@@ -157,7 +144,6 @@ async function callOpenRouterWithKey(
       }
     );
 
-    // robust extraction: depending on SDK version shape may differ.
     const content =
       (completion as any)?.choices?.[0]?.message?.content ??
       (completion as any)?.choices?.[0]?.text ??
@@ -173,16 +159,14 @@ async function callOpenRouterWithKey(
       `OpenRouter API error with ${modelConfig?.name ?? MODEL}:`,
       error
     );
-    // rethrow so caller can handle/refund
     throw error;
   }
 }
+
 async function parseAndValidate(content: string): Promise<LLMResponse> {
-  // Trim and attempt to find JSON in response
   const trimmed = content.trim();
   let jsonText = trimmed;
 
-  // If response contains markdown or code fences, strip them
   if (jsonText.startsWith("```") || jsonText.startsWith("```json")) {
     jsonText = jsonText.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
   }
@@ -192,7 +176,6 @@ async function parseAndValidate(content: string): Promise<LLMResponse> {
     const validated = LLMResponseSchema.parse(parsed);
     return validated;
   } catch (err) {
-    // Try to salvage if there is an embedded JSON object
     const match = jsonText.match(/\{[\s\S]*\}/);
     if (match) {
       try {
@@ -206,13 +189,17 @@ async function parseAndValidate(content: string): Promise<LLMResponse> {
   }
 }
 
-export async function summarizeAndCategorize(opts: {
+/**
+ * NEW: Summarize and categorize using a specific API key
+ * This bypasses the round-robin and Redis rate limiting
+ */
+export async function summarizeAndCategorizeWithKey(opts: {
   title: string;
   text?: string | null;
   categories: { slug: string; name: string; description?: string }[];
   billId?: string | null;
   executiveOrderId?: string | null;
-  // set to true only in exceptional workflows that intentionally re-run the LLM
+  apiKey: string;
   allowResummarize?: boolean;
 }): Promise<LLMResponse> {
   const {
@@ -221,11 +208,11 @@ export async function summarizeAndCategorize(opts: {
     categories,
     billId = null,
     executiveOrderId = null,
+    apiKey,
     allowResummarize = false,
   } = opts;
 
-  // Safety: if the caller supplies a billId or executiveOrderId, do not resummarize
-  // unless explicitly allowed. This prevents accidental re-use of LLM credits.
+  // Safety check: prevent re-summarization unless explicitly allowed
   if (!allowResummarize) {
     try {
       if (billId) {
@@ -251,31 +238,92 @@ export async function summarizeAndCategorize(opts: {
         }
       }
     } catch (e) {
-      // If DB check fails, be conservative: rethrow so upstream can decide. We do not fall through and call the LLM.
       throw e;
     }
   }
+
   const messages = buildPrompt(title, text, categories);
-  // Try to reserve a slot for any key. We'll attempt up to OPENROUTER_API_KEYS.length times.
-  if (OPENROUTER_API_KEYS.length === 0)
+
+  try {
+    const content = await callOpenRouterWithKey(apiKey, messages);
+    const result = await parseAndValidate(content);
+    return result;
+  } catch (error) {
+    console.error("Error in summarizeAndCategorizeWithKey:", error);
+    throw error;
+  }
+}
+
+/**
+ * Original function: Uses round-robin with Redis rate limiting
+ */
+export async function summarizeAndCategorize(opts: {
+  title: string;
+  text?: string | null;
+  categories: { slug: string; name: string; description?: string }[];
+  billId?: string | null;
+  executiveOrderId?: string | null;
+  allowResummarize?: boolean;
+}): Promise<LLMResponse> {
+  const {
+    title,
+    text = null,
+    categories,
+    billId = null,
+    executiveOrderId = null,
+    allowResummarize = false,
+  } = opts;
+
+  // Safety check
+  if (!allowResummarize) {
+    try {
+      if (billId) {
+        const existing = await db.summary.findFirst({ where: { billId } });
+        if (existing) {
+          const err = new Error("Already summarized for this bill") as Error & {
+            code?: string;
+          };
+          err.code = "ALREADY_SUMMARIZED";
+          throw err;
+        }
+      }
+      if (executiveOrderId) {
+        const existing = await db.summary.findFirst({
+          where: { executiveOrderId },
+        });
+        if (existing) {
+          const err = new Error(
+            "Already summarized for this executive order"
+          ) as Error & { code?: string };
+          err.code = "ALREADY_SUMMARIZED";
+          throw err;
+        }
+      }
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  const messages = buildPrompt(title, text, categories);
+
+  if (OPENROUTER_API_KEYS.length === 0) {
     throw new Error("No OpenRouter keys configured");
+  }
 
   let lastErr: unknown = null;
   const triedKeyIndices: number[] = [];
 
+  // Try each key in round-robin fashion
   for (let rotate = 0; rotate < OPENROUTER_API_KEYS.length; rotate++) {
     const idx = (keyIndex + rotate) % OPENROUTER_API_KEYS.length;
     const key = OPENROUTER_API_KEYS[idx];
     triedKeyIndices.push(idx);
 
-    // Attempt to reserve a slot for this key index
     const reserved = await llmRedis.reserveForKeyIndex(idx);
     if (!reserved) {
-      // no capacity on this key, try next
       continue;
     }
 
-    // Advance the round-robin pointer to next after the reserved one
     keyIndex = (idx + 1) % OPENROUTER_API_KEYS.length;
 
     try {
@@ -284,14 +332,12 @@ export async function summarizeAndCategorize(opts: {
       return result;
     } catch (err) {
       lastErr = err;
-      // Refund the reservation since the call failed before success
       try {
         await llmRedis.refundForKeyIndex(idx);
       } catch (e) {
         console.error("Failed to refund Redis reservation", e);
       }
 
-      // If rate limited at request time, continue to next key
       if (
         typeof err === "object" &&
         err !== null &&
@@ -300,12 +346,11 @@ export async function summarizeAndCategorize(opts: {
         continue;
       }
 
-      // Otherwise, rethrow
       throw err;
     }
   }
 
-  // If we reach here, no key had capacity. Enqueue the payload for later processing.
+  // No capacity available, enqueue
   try {
     await llmRedis.enqueuePayload({
       title,
@@ -320,13 +365,13 @@ export async function summarizeAndCategorize(opts: {
     enqErr.code = "ENQUEUED";
     throw enqErr;
   } catch (e) {
-    // If enqueueing fails, surface the original last error if present
     throw lastErr || e;
   }
 }
 
 const exported = {
   summarizeAndCategorize,
+  summarizeAndCategorizeWithKey,
   LLMResponseSchema,
 };
 
