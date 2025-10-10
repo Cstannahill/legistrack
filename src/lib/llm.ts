@@ -3,18 +3,30 @@ import llmRedis from "@/lib/llmRedis";
 import { db } from "@/lib/db";
 import OpenAI from "openai";
 
-const OPENROUTER_KEYS = (
-  [
-    process.env.OPENROUTER_API_KEY_1,
-    process.env.OPENROUTER_API_KEY_2,
-    process.env.OPENROUTER_API_KEY_3,
-  ]
-    .filter(Boolean)
-    .join(",") || ""
-)
-  .split(",")
-  .map((k) => k.trim())
-  .filter(Boolean);
+function getEnvKeys(prefix: string, count = 5): string[] {
+  const keys: string[] = [];
+  for (let i = 1; i <= count; i++) {
+    const val = process.env[`${prefix}_${i}`];
+    if (val) keys.push(val.trim());
+  }
+  if (keys.length === 0) {
+    console.warn(
+      `[WARN] No ${prefix} keys found. Available env keys:`,
+      Object.keys(process.env).filter((k) => k.includes(prefix))
+    );
+  }
+  return keys;
+}
+
+const OPENROUTER_KEYS = getEnvKeys("OPENROUTER_API_KEY");
+if (process.env.VERCEL_ENV) {
+  console.log(
+    "[Runtime ENV]",
+    process.env.VERCEL_ENV,
+    "keys found:",
+    OPENROUTER_KEYS.length
+  );
+}
 type OpenRouterMessage = {
   role: "system" | "user" | "assistant";
   content: string;
