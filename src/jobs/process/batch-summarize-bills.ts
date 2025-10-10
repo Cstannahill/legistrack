@@ -92,7 +92,7 @@ export const batchSummarizeBillsJob = inngest.createFunction(
     name: "Batch Summarize Bills",
     retries: 2,
   },
-  { cron: "0 */4 * * *" },
+  { cron: "0 */1 * * *" },
   async ({ step }) => {
     const lookbackDate = subDays(new Date(), 3);
 
@@ -109,7 +109,7 @@ export const batchSummarizeBillsJob = inngest.createFunction(
             introducedDate: { gte: lookbackDate },
             OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
           },
-          take: 10, // Reduced for API rate limiting
+          take: 2, // Reduced for API rate limiting
           orderBy: { introducedDate: "desc" },
           select: {
             id: true,
