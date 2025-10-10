@@ -11,7 +11,7 @@ Files
 Environment variables
 
 - `REDIS_URL` — Redis connection string (e.g. redis://127.0.0.1:6379). If using Vercel KV, set `VERCEL_REDIS_URL` instead.
-- `OPENROUTER_KEYS` — Comma-separated OpenRouter API keys used for rotation.
+- `OPENROUTER_API_KEYS` — Comma-separated OpenRouter API keys used for rotation.
 - `LLM_PER_MINUTE` — Per-key per-minute limit (default: 20).
 - `LLM_PER_DAY` — Per-key per-day limit (default: 50).
 - `LLM_MAX_ATTEMPTS` — Number of times a queued item will be retried before being written to the durable DeadLetter table (default: 5).

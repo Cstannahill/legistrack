@@ -14,7 +14,7 @@ import type { SummaryType } from "@prisma/client";
 
 import { getOpenRouterKeys } from "@/lib/openrouter-keys";
 
-const OPENROUTER_KEYS = getOpenRouterKeys(); // will throw if none found
+const OPENROUTER_API_KEYS = getOpenRouterKeys(); // will throw if none found
 
 // Model configurations
 const OPENROUTER_MODELS = {
@@ -49,8 +49,10 @@ export type OpenRouterModel = keyof typeof OPENROUTER_MODELS;
 // Initialize OpenRouter client (uses OpenAI SDK with custom base URL)
 const openrouter = new OpenAI({
   apiKey:
-    OPENROUTER_KEYS.length > 0
-      ? OPENROUTER_KEYS[Math.floor(Math.random() * OPENROUTER_KEYS.length)]
+    OPENROUTER_API_KEYS.length > 0
+      ? OPENROUTER_API_KEYS[
+          Math.floor(Math.random() * OPENROUTER_API_KEYS.length)
+        ]
       : undefined,
   baseURL: "https://openrouter.ai/api/v1",
 });
@@ -81,7 +83,7 @@ export async function generateSummaryOpenRouter({
 }: GenerateSummaryParams): Promise<SummaryResponse> {
   const modelConfig = OPENROUTER_MODELS[model];
 
-  if (OPENROUTER_KEYS.length === 0) {
+  if (OPENROUTER_API_KEYS.length === 0) {
     throw new Error("OPENROUTER_API_KEY environment variable is not set");
   }
 

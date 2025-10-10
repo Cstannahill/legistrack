@@ -4,15 +4,15 @@ import { db } from "@/lib/db";
 import OpenAI from "openai";
 import { getOpenRouterKeys } from "@/lib/openrouter-keys";
 
-const OPENROUTER_KEYS = getOpenRouterKeys(); // will throw if none found
+const OPENROUTER_API_KEYS = getOpenRouterKeys(); // will throw if none found
 
 type OpenRouterMessage = {
   role: "system" | "user" | "assistant";
   content: string;
 };
-if (OPENROUTER_KEYS.length === 0) {
+if (OPENROUTER_API_KEYS.length === 0) {
   console.warn(
-    "WARNING: No OPENROUTER_KEYS configured. LLM calls will fail until keys are provided."
+    "WARNING: No OPENROUTER_API_KEYS configured. LLM calls will fail until keys are provided."
   );
 }
 
@@ -48,8 +48,10 @@ export type OpenRouterModel = keyof typeof OPENROUTER_MODELS;
 // Initialize OpenRouter client (uses OpenAI SDK with custom base URL)
 const openrouter = new OpenAI({
   apiKey:
-    OPENROUTER_KEYS.length > 0
-      ? OPENROUTER_KEYS[Math.floor(Math.random() * OPENROUTER_KEYS.length)]
+    OPENROUTER_API_KEYS.length > 0
+      ? OPENROUTER_API_KEYS[
+          Math.floor(Math.random() * OPENROUTER_API_KEYS.length)
+        ]
       : undefined,
   baseURL: "https://openrouter.ai/api/v1",
 });
@@ -254,16 +256,16 @@ export async function summarizeAndCategorize(opts: {
     }
   }
   const messages = buildPrompt(title, text, categories);
-  // Try to reserve a slot for any key. We'll attempt up to OPENROUTER_KEYS.length times.
-  if (OPENROUTER_KEYS.length === 0)
+  // Try to reserve a slot for any key. We'll attempt up to OPENROUTER_API_KEYS.length times.
+  if (OPENROUTER_API_KEYS.length === 0)
     throw new Error("No OpenRouter keys configured");
 
   let lastErr: unknown = null;
   const triedKeyIndices: number[] = [];
 
-  for (let rotate = 0; rotate < OPENROUTER_KEYS.length; rotate++) {
-    const idx = (keyIndex + rotate) % OPENROUTER_KEYS.length;
-    const key = OPENROUTER_KEYS[idx];
+  for (let rotate = 0; rotate < OPENROUTER_API_KEYS.length; rotate++) {
+    const idx = (keyIndex + rotate) % OPENROUTER_API_KEYS.length;
+    const key = OPENROUTER_API_KEYS[idx];
     triedKeyIndices.push(idx);
 
     // Attempt to reserve a slot for this key index
@@ -274,7 +276,7 @@ export async function summarizeAndCategorize(opts: {
     }
 
     // Advance the round-robin pointer to next after the reserved one
-    keyIndex = (idx + 1) % OPENROUTER_KEYS.length;
+    keyIndex = (idx + 1) % OPENROUTER_API_KEYS.length;
 
     try {
       const content = await callOpenRouterWithKey(key, messages);
