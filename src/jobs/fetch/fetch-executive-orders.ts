@@ -5,13 +5,14 @@ import {
   fetchExecutiveOrderDetails,
   fetchExecutiveOrderFullText,
   type FederalRegisterDocument,
+  normalizeConditionsForFederalRegister,
 } from "@/lib/api/federal-register";
 import { db } from "@/lib/db";
 import { ExecutiveOrderType } from "@prisma/client";
 
-const FETCH_TEXT = process.env.FETCH_TEXT === "true";
+const FETCH_TEXT = "true";
 const LIMIT = parseInt(process.env.LIMIT || "100", 10);
-const PER_PAGE = 100; // Federal Register API max per-page (adjust if your helper enforces other limits)
+const PER_PAGE = 40; // Federal Register API max per-page (adjust if your helper enforces other limits)
 const PAGE_OFFSET = (() => {
   const raw = process.env.PAGE_OFFSET ?? process.env.OFFSET ?? "0";
   const parsed = parseInt(raw, 10);
@@ -120,18 +121,16 @@ export const fetchExecutiveOrdersJob = inngest.createFunction(
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      const conditions = {
-        publicationDate: {
-          gte: thirtyDaysAgo.toISOString().split("T")[0],
-        },
-        presidentialDocumentType: [
+      const conditionsRaw = {
+        publication_date: { gte: thirtyDaysAgo.toISOString().split("T")[0] },
+        presidential_document_type: [
           "executive_order",
           "presidential_memorandum",
           "proclamation",
           "determination",
         ],
       };
-
+      const conditions = normalizeConditionsForFederalRegister(conditionsRaw);
       // We'll page until we've fetched LIMIT items or exhausted results
       const resultsAggregate: Array<{
         action: string;
