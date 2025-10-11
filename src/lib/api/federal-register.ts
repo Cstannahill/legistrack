@@ -116,6 +116,21 @@ export async function fetchExecutiveOrderFullText(documentNumber: string) {
 
   return null;
 }
+export function normalizeConditionsForFederalRegister(
+  input: Record<string, any>
+) {
+  const mapKey = (k: string) =>
+    k
+      .replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)
+      .replace(/^_/, "") // camelCase -> snake_case
+      .replace(/[^\w_]/g, "_");
+
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(input)) {
+    out[mapKey(k)] = v;
+  }
+  return out;
+}
 
 // Type definitions for Federal Register API responses
 export interface FederalRegisterDocument {
