@@ -44,6 +44,15 @@ interface BillTextVersion {
   }>;
 }
 
+type EnrichInput =
+  | string // db id (old behaviour)
+  | {
+      // either an explicit db/external billId (if you have one), OR the congress/triple
+      billId?: string;
+      congress?: number | string;
+      billType?: string;
+      billNumber?: string;
+    };
 /**
  * Fetch full bill details from Congress API
  */
@@ -115,78 +124,212 @@ export async function fetchBillText(
 /**
  * Enrich a bill record with full details from Congress API
  */
-export async function enrichBillFromCongress(billId: string): Promise<{
+export async function enrichBillFromCongress(input: EnrichInput): Promise<{
   success: boolean;
   hasText: boolean;
+  billId?: string; // DB id we ended up enriching (useful for callers)
   error?: string;
 }> {
   try {
-    const bill = await db.bill.findUnique({
-      where: { id: billId },
-      select: {
-        id: true,
-        congress: true,
-        billType: true,
-        billNumber: true,
-        fullText: true,
-      },
-    });
+    // Normalize input
+    let dbId: string | undefined;
+    let congress: number | string | undefined;
+    let billType: string | undefined;
+    let billNumber: string | undefined;
 
-    if (!bill) {
-      return { success: false, hasText: false, error: "Bill not found" };
+    if (typeof input === "string") {
+      dbId = input;
+    } else {
+      // input is object
+      if (input.billId) dbId = input.billId;
+      congress = input.congress;
+      billType = input.billType;
+      billNumber = input.billNumber;
     }
+
+    // Helper to fetch detail/text from congress API using congress + billType + billNumber
+    async function fetchDetailAndText(
+      c: number | string,
+      bt: string,
+      bn: string
+    ) {
+      const detail = await fetchBillDetail(c as number, bt, Number(bn));
+      const fullText = await fetchBillText(c as number, bt, Number(bn));
+      return { detail, fullText };
+    }
+
+    // Step A: If we have a DB id, try to load
+    let bill = null;
+    if (dbId) {
+      bill = await db.bill.findUnique({
+        where: { id: dbId },
+        select: {
+          id: true,
+          congress: true,
+          billType: true,
+          billNumber: true,
+          fullText: true,
+        },
+      });
+
+      if (!bill && congress && billType && billNumber) {
+        // If the caller passed both a dbId and the triple but db lookup failed,
+        // fallback to looking up by triple.
+        bill = await db.bill.findFirst({
+          where: {
+            congress: Number(congress),
+            billType,
+            billNumber: Number(billNumber),
+          },
+          select: {
+            id: true,
+            congress: true,
+            billType: true,
+            billNumber: true,
+            fullText: true,
+          },
+        });
+      }
+    } else if (congress && billType && billNumber) {
+      // Step B: No dbId - look for a DB record matching the triple
+      bill = await db.bill.findFirst({
+        where: {
+          congress: Number(congress),
+          billType,
+          billNumber: Number(billNumber),
+        },
+        select: {
+          id: true,
+          congress: true,
+          billType: true,
+          billNumber: true,
+          fullText: true,
+        },
+      });
+    }
+
+    // If no bill record exists but we have the triple, fetch details and create a minimal record
+    if (!bill) {
+      if (!(congress && billType && billNumber)) {
+        return {
+          success: false,
+          hasText: false,
+          error:
+            "Missing identifiers: provide either DB id (string) or congress+billType+billNumber.",
+        };
+      }
+
+      // Fetch from congress so we can create a DB row
+      const { detail, fullText } = await fetchDetailAndText(
+        congress,
+        billType,
+        billNumber
+      );
+
+      // Build minimal create payload from what the congress API returned.
+      // Adjust fields below to match your DB schema as needed.
+      const createPayload: any = {
+        congress: Number(congress),
+        billType,
+        billNumber,
+        title: detail?.bill?.title ?? `${billType} ${billNumber}`,
+        lastFetchedAt: new Date(),
+      };
+
+      if (fullText) {
+        createPayload.fullText = fullText;
+        createPayload.fullTextUrl = `${BASE_URL}/bill/${congress}/${billType}/${billNumber}/text`;
+      }
+
+      // Try to create the record (wrap in try/catch in case of uniqueness constraints)
+      try {
+        const created = await db.bill.create({
+          data: createPayload,
+          select: {
+            id: true,
+            congress: true,
+            billType: true,
+            billNumber: true,
+            fullText: true,
+          },
+        });
+        bill = created;
+      } catch (createErr) {
+        // If create fails (e.g., race / unique constraint), try to re-find the bill
+        bill = await db.bill.findFirst({
+          where: {
+            congress: Number(congress),
+            billType,
+            billNumber: Number(billNumber),
+          },
+          select: {
+            id: true,
+            congress: true,
+            billType: true,
+            billNumber: true,
+            fullText: true,
+          },
+        });
+
+        if (!bill) {
+          // If still not found, return an error
+          return {
+            success: false,
+            hasText: !!fullText,
+            error: `Failed to create or locate bill record for ${congress} ${billType} ${billNumber}: ${String(
+              createErr
+            )}`,
+          };
+        }
+      }
+    }
+
+    // At this point we have a DB bill row
+    const targetBillId = bill.id;
 
     // Skip if already has full text
     if (bill.fullText) {
-      return { success: true, hasText: true };
+      return { success: true, hasText: true, billId: targetBillId };
     }
 
-    // Fetch full details
-    const detail = await fetchBillDetail(
-      bill.congress,
-      bill.billType,
-      bill.billNumber
-    );
+    // If we reached here, we need to fetch details and full text using the triple
+    const c = bill.congress;
+    const bt = bill.billType;
+    const bn = bill.billNumber;
 
-    // Fetch full text
-    const fullText = await fetchBillText(
-      bill.congress,
-      bill.billType,
-      bill.billNumber
-    );
+    const { detail, fullText } = await fetchDetailAndText(c, bt, String(bn));
 
-    // Update bill with enriched data
     const updateData: any = {
       lastFetchedAt: new Date(),
     };
 
     if (fullText) {
       updateData.fullText = fullText;
-      updateData.fullTextUrl = `${BASE_URL}/bill/${bill.congress}/${bill.billType}/${bill.billNumber}/text`;
+      updateData.fullTextUrl = `${BASE_URL}/bill/${c}/${bt}/${bn}/text`;
     }
 
-    // Enrich with sponsor if available
-    if (detail.bill.sponsors && detail.bill.sponsors.length > 0) {
+    // Enrich with sponsor if available (same as your current logic)
+    if (detail?.bill?.sponsors && detail.bill.sponsors.length > 0) {
       const sponsor = detail.bill.sponsors[0];
-
-      // Find or create sponsor in DB
       const memberRecord = await db.member.findUnique({
         where: { bioguideId: sponsor.bioguideId },
       });
-
       if (memberRecord) {
         updateData.sponsorId = memberRecord.id;
       }
     }
 
     await db.bill.update({
-      where: { id: billId },
+      where: { id: targetBillId },
       data: updateData,
     });
 
-    return { success: true, hasText: !!fullText };
+    return { success: true, hasText: !!fullText, billId: targetBillId };
   } catch (error) {
-    console.error(`Error enriching bill ${billId}:`, error);
+    console.error(
+      `Error enriching bill input=${JSON.stringify(input)}:`,
+      error
+    );
     return {
       success: false,
       hasText: false,
