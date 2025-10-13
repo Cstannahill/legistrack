@@ -289,14 +289,28 @@ async function processSingleItem(
 
   try {
     // Call LLM with specific API key
-    const response = await llm.summarizeAndCategorizeWithKey({
+    const payload: any = {
       title: item.title,
       text: item.text,
       categories,
-      billId: item.type === "bill" ? item.id : undefined,
-      executiveOrderId: item.type === "executive-order" ? item.id : undefined,
       apiKey,
-    });
+    };
+
+    if (item.type === "bill") {
+      // prefer an explicit external billId if available
+      if (item.meta?.billId) {
+        payload.billId = item.meta.billId;
+      } else {
+        // fall back to congress + billType + billNumber (what the external API asked for)
+        payload.congress = item.meta?.congress;
+        payload.billType = item.meta?.billType;
+        payload.billNumber = item.meta?.billNumber;
+      }
+    } else if (item.type === "executive-order") {
+      payload.executiveOrderId = item.id; // assuming EO id is acceptable
+    }
+
+    const response = await llm.summarizeAndCategorizeWithKey(payload);
 
     // Validate response
     const validation = validateLLMResponse(response);
@@ -411,11 +425,27 @@ function createProcessorJob(jobNumber: 1 | 2 | 3, cronMinute: 0 | 20 | 40) {
       }
 
       const { item, categories } = selection;
+      if (item.type === "bill") {
+        const hasExternalId = false;
+        const hasTriple =
+          !!item.meta?.congress &&
+          !!item.meta?.billType &&
+          !!item.meta?.billNumber;
+        if (!hasExternalId && !hasTriple) {
+          throw new Error(
+            `Cannot process bill ${item.id}: missing external identifiers. Provide billId or congress+billType+billNumber in item.meta.`
+          );
+        }
+      }
 
       // Step 2: Enrich if needed (bills only)
       if (item.type === "bill" && !item.text) {
         await step.run("enrich-from-congress", async () => {
-          const result = await enrichBillFromCongress(item.id);
+          const result = await enrichBillFromCongress({
+            congress: item.meta?.congress,
+            billType: item.meta?.billType,
+            billNumber: item.meta?.billNumber,
+          });
           await new Promise((resolve) => setTimeout(resolve, 1000));
           return result;
         });
