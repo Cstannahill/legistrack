@@ -112,60 +112,60 @@ async function selectSingleItemToProcess() {
   }
 
   // PRIMARY: Recent items WITH fullText (last 3 days)
-  // const recentBill = await db.bill.findFirst({
-  //   where: {
-  //     introducedDate: { gte: lookbackDate },
-  //     fullText: { not: null },
-  //     OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
-  //   },
-  //   orderBy: { introducedDate: "desc" },
-  //   select: {
-  //     id: true,
-  //     billType: true,
-  //     billNumber: true,
-  //     congress: true,
-  //     title: true,
-  //     fullText: true,
-  //   },
-  // });
+  const recentBill = await db.bill.findFirst({
+    where: {
+      introducedDate: { gte: lookbackDate },
+      fullText: { not: null },
+      AND: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+    },
+    orderBy: { introducedDate: "desc" },
+    select: {
+      id: true,
+      billType: true,
+      billNumber: true,
+      congress: true,
+      title: true,
+      fullText: true,
+    },
+  });
 
-  // if (recentBill) {
-  //   return {
-  //     categories: categories.map((c) => ({
-  //       slug: c.slug,
-  //       name: c.name,
-  //       description: c.description ?? undefined,
-  //     })),
-  //     item: mapBillRowToItem(recentBill),
-  //   };
-  // }
+  if (recentBill) {
+    return {
+      categories: categories.map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        description: c.description ?? undefined,
+      })),
+      item: mapBillRowToItem(recentBill),
+    };
+  }
 
-  // const recentEO = await db.executiveOrder.findFirst({
-  //   where: {
-  //     signingDate: { gte: lookbackDate },
-  //     fullText: { not: null },
-  //     OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
-  //   },
-  //   orderBy: { signingDate: "desc" },
-  //   select: { id: true, orderNumber: true, title: true, fullText: true },
-  // });
+  const recentEO = await db.executiveOrder.findFirst({
+    where: {
+      signingDate: { gte: lookbackDate },
+      fullText: { not: null },
+      AND: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+    },
+    orderBy: { signingDate: "desc" },
+    select: { id: true, orderNumber: true, title: true, fullText: true },
+  });
 
-  // if (recentEO) {
-  //   return {
-  //     categories: categories.map((c) => ({
-  //       slug: c.slug,
-  //       name: c.name,
-  //       description: c.description ?? undefined,
-  //     })),
-  //     item: mapEOToItem(recentEO),
-  //   };
-  // }
+  if (recentEO) {
+    return {
+      categories: categories.map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        description: c.description ?? undefined,
+      })),
+      item: mapEOToItem(recentEO),
+    };
+  }
 
   // FALLBACK A: Any bill/EO with fullText but no summary (ignore date)
   const anyBill = await db.bill.findFirst({
     where: {
       fullText: { not: null },
-      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+      AND: [{ summaries: { none: {} } }, { categories: { none: {} } }],
     },
     orderBy: { introducedDate: "desc" },
     select: {
@@ -192,7 +192,7 @@ async function selectSingleItemToProcess() {
   const anyEO = await db.executiveOrder.findFirst({
     where: {
       fullText: { not: null },
-      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+      AND: [{ summaries: { none: {} } }, { categories: { none: {} } }],
     },
     orderBy: { signingDate: "desc" },
     select: { id: true, orderNumber: true, title: true, fullText: true },
@@ -216,7 +216,7 @@ async function selectSingleItemToProcess() {
     where: {
       introducedDate: { gte: widenedLookback },
       fullText: { not: null },
-      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+      AND: [{ summaries: { none: {} } }, { categories: { none: {} } }],
     },
     orderBy: { introducedDate: "desc" },
     select: {
@@ -244,7 +244,7 @@ async function selectSingleItemToProcess() {
     where: {
       signingDate: { gte: widenedLookback },
       fullText: { not: null },
-      OR: [{ summaries: { none: {} } }, { categories: { none: {} } }],
+      AND: [{ summaries: { none: {} } }, { categories: { none: {} } }],
     },
     orderBy: { signingDate: "desc" },
     select: { id: true, orderNumber: true, title: true, fullText: true },
