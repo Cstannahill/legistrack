@@ -108,7 +108,7 @@ export async function handler(
     })),
   };
 
-  logger.info("Legislation ingestion finished", summary);
+  logger.info("Legislation ingestion finished", { summary });
 
   return summary;
 }
