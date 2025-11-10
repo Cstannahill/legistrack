@@ -1,4 +1,4 @@
-import type { BillStatus } from "@prisma/client";
+import type { BillStatus, Prisma } from "@prisma/client";
 import { db } from "../../src/lib/db";
 import { getCongressGovBillUrl } from "../../src/lib/utils/congress-url";
 import type { CongressClient } from "./congressClient";
@@ -172,47 +172,35 @@ function mapAmendmentRecords(
   billId: string,
   amendments: HydratedBillData["amendments"],
   sponsorLookup: Map<string, string>
-) {
-  return amendments
-    .map((amendment) => {
-      const number = amendment.number;
-      const type = amendment.type;
-      const congress = amendment.congress;
-      if (!number || !type || !congress) {
-        return undefined;
-      }
+): Prisma.AmendmentCreateManyInput[] {
+  return amendments.flatMap((amendment) => {
+    const number = amendment.number;
+    const type = amendment.type;
+    const congress = amendment.congress;
+    if (!number || !type || !congress) {
+      return [];
+    }
 
-      const statusDate = parseDate(amendment.statusDate) ?? new Date();
-      const sponsorBioguide = amendment.sponsor?.bioguideId;
-      const sponsorId = sponsorBioguide ? sponsorLookup.get(sponsorBioguide) : undefined;
+    const statusDate = parseDate(amendment.statusDate) ?? new Date();
+    const sponsorBioguide = amendment.sponsor?.bioguideId;
+    const sponsorId = sponsorBioguide ? sponsorLookup.get(sponsorBioguide) : undefined;
 
-      return {
-        billId,
-        amendmentNumber: number,
-        amendmentType: type,
-        congress,
-        purpose: amendment.purpose ?? null,
-        description: amendment.description ?? null,
-        status: amendment.status ?? "Unknown",
-        statusDate,
-        sponsorId,
-        proposedDate: statusDate,
-        sourceUrl: undefined,
-      };
-    })
-    .filter((record): record is {
-      billId: string;
-      amendmentNumber: string;
-      amendmentType: string;
-      congress: number;
-      purpose: string | null;
-      description: string | null;
-      status: string;
-      statusDate: Date;
-      sponsorId: string | undefined;
-      proposedDate: Date;
-      sourceUrl: string | undefined;
-    } => Boolean(record));
+    const record: Prisma.AmendmentCreateManyInput = {
+      billId,
+      amendmentNumber: number,
+      amendmentType: type,
+      congress,
+      purpose: amendment.purpose ?? null,
+      description: amendment.description ?? null,
+      status: amendment.status ?? "Unknown",
+      statusDate,
+      sponsorId,
+      proposedDate: statusDate,
+      sourceUrl: null,
+    };
+
+    return [record];
+  });
 }
 
 export interface PersistOptions {

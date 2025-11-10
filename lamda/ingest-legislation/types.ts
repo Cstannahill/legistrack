@@ -74,7 +74,9 @@ export interface CongressPersonReference extends CongressName {
 export interface CongressBillDetail {
   bill: {
     billType?: string;
+    type?: string;
     billNumber?: string;
+    number?: string;
     congress?: number;
     title?: string;
     shortTitle?: string;
