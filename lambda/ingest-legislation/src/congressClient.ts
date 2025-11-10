@@ -1,4 +1,4 @@
-import { CONGRESS_API_BASE } from "../../../src/lib/constants.js";
+import { CONGRESS_API_BASE } from "./constants.js";
 import { createLogger, Logger } from "../../logger.js";
 import type {
   CongressAmendmentResponse,

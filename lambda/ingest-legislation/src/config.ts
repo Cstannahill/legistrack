@@ -1,4 +1,4 @@
-import { CURRENT_CONGRESS } from "../../../src/lib/constants.js";
+import { CURRENT_CONGRESS } from "./constants.js";
 import type { EnvironmentConfig } from "./types.js";
 
 export function loadEnvironmentConfig(): EnvironmentConfig {
