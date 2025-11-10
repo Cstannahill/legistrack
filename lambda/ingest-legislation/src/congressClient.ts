@@ -1,5 +1,5 @@
-import { CONGRESS_API_BASE } from "../../src/lib/constants";
-import { createLogger, Logger } from "../logger";
+import { CONGRESS_API_BASE } from "../../../src/lib/constants.js";
+import { createLogger, Logger } from "../../logger.js";
 import type {
   CongressAmendmentResponse,
   CongressBillActionResponse,
@@ -9,7 +9,7 @@ import type {
   CongressMemberDetail,
   CongressPersonReference,
   HydratedBillData,
-} from "./types";
+} from "./types.js";
 
 interface FetchPageOptions {
   congress: number;
@@ -36,7 +36,10 @@ export class CongressClient {
     this.logger = options.logger ?? createLogger({ context: "CongressClient" });
   }
 
-  private async fetchJson<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+  private async fetchJson<T>(
+    path: string,
+    params: Record<string, string> = {}
+  ): Promise<T> {
     const url = new URL(`${CONGRESS_API_BASE}${path}`);
     url.searchParams.set("api_key", this.apiKey);
     url.searchParams.set("format", "json");
@@ -61,8 +64,11 @@ export class CongressClient {
     return (await response.json()) as T;
   }
 
-  async fetchBillPage(options: FetchPageOptions): Promise<CongressBillListResponse> {
-    const { congress, billTypes, limit, offset, fromDateTime, toDateTime } = options;
+  async fetchBillPage(
+    options: FetchPageOptions
+  ): Promise<CongressBillListResponse> {
+    const { congress, billTypes, limit, offset, fromDateTime, toDateTime } =
+      options;
     const params: Record<string, string> = {
       limit: String(limit ?? DEFAULT_LIMIT),
       offset: String(offset ?? 0),
@@ -74,7 +80,10 @@ export class CongressClient {
       params.billType = billTypes.join(",");
     }
 
-    return this.fetchJson<CongressBillListResponse>(`/bill/${congress}`, params);
+    return this.fetchJson<CongressBillListResponse>(
+      `/bill/${congress}`,
+      params
+    );
   }
 
   async fetchBillDetail(
@@ -82,7 +91,9 @@ export class CongressClient {
     billType: string,
     billNumber: string
   ): Promise<CongressBillDetail> {
-    return this.fetchJson<CongressBillDetail>(`/bill/${congress}/${billType}/${billNumber}`);
+    return this.fetchJson<CongressBillDetail>(
+      `/bill/${congress}/${billType}/${billNumber}`
+    );
   }
 
   async fetchBillText(
@@ -101,7 +112,9 @@ export class CongressClient {
     }
 
     const formattedText = version.formats?.find((format) =>
-      ["Formatted Text", "TXT", "TEXT"].includes((format.type ?? "").toUpperCase())
+      ["Formatted Text", "TXT", "TEXT"].includes(
+        (format.type ?? "").toUpperCase()
+      )
     );
 
     if (!formattedText?.url) {
@@ -113,11 +126,16 @@ export class CongressClient {
     }
 
     try {
-      const textResponse = await fetch(`${formattedText.url}?api_key=${this.apiKey}`);
+      const textResponse = await fetch(
+        `${formattedText.url}?api_key=${this.apiKey}`
+      );
       if (textResponse.ok) {
         const raw = await textResponse.text();
         const content = raw.includes("<pre>")
-          ? raw.replace(/^.*<pre>/is, "").replace(/<\/pre>.*$/is, "").trim()
+          ? raw
+              .replace(/^.*<pre>/is, "")
+              .replace(/<\/pre>.*$/is, "")
+              .trim()
           : raw;
         return {
           content,
@@ -165,16 +183,18 @@ export class CongressClient {
     billType: string,
     billNumber: string
   ): Promise<CongressPersonReference[]> {
-    const data = await this.fetchJson<{ cosponsors?: { items?: CongressPersonReference[] } }>(
-      `/bill/${congress}/${billType}/${billNumber}/cosponsors`
-    );
+    const data = await this.fetchJson<{
+      cosponsors?: { items?: CongressPersonReference[] };
+    }>(`/bill/${congress}/${billType}/${billNumber}/cosponsors`);
 
     return data.cosponsors?.items ?? [];
   }
 
   async fetchMember(bioguideId: string): Promise<CongressMemberDetail | null> {
     try {
-      return await this.fetchJson<CongressMemberDetail>(`/member/${bioguideId}`);
+      return await this.fetchJson<CongressMemberDetail>(
+        `/member/${bioguideId}`
+      );
     } catch (error) {
       this.logger.warn("Failed to fetch member", {
         bioguideId,

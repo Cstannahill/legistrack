@@ -1,18 +1,18 @@
 import type { BillStatus, Prisma } from "@prisma/client";
-import { db } from "../../src/lib/db";
-import { getCongressGovBillUrl } from "../../src/lib/utils/congress-url";
-import type { CongressClient } from "./congressClient";
-import { createLogger, Logger } from "../logger";
+import { db } from "../../../src/lib/db.js";
+import { getCongressGovBillUrl } from "../../../src/lib/utils/congress-url.js";
+import type { CongressClient } from "./congressClient.js";
+import { createLogger, Logger } from "../../logger.js";
 import type {
   CongressPersonReference,
   HydratedBillData,
   PersistedBillResult,
-} from "./types";
+} from "./types.js";
 import {
   buildBillIdentifier,
   normalizePersonName,
   resolveStatus,
-} from "./utils";
+} from "./utils.js";
 
 function parseDate(value?: string | null, fallback?: Date): Date | undefined {
   if (!value) {
@@ -73,14 +73,19 @@ async function ensureMember(
   const term = member?.terms?.[0];
   const termStart =
     parseDate(term?.startDate) ??
-    (term?.startYear ? new Date(`${term.startYear}-01-03T00:00:00Z`) : new Date());
-  const termEnd = parseDate(term?.endDate) ??
+    (term?.startYear
+      ? new Date(`${term.startYear}-01-03T00:00:00Z`)
+      : new Date());
+  const termEnd =
+    parseDate(term?.endDate) ??
     (term?.endYear ? new Date(`${term.endYear}-01-03T00:00:00Z`) : undefined);
 
   const state = member?.state ?? term?.state ?? reference.state;
   const party = member?.party ?? term?.party ?? reference.party ?? "Unknown";
   const districtRaw = member?.district ?? term?.district ?? reference.district;
-  const district = districtRaw ? Number.parseInt(String(districtRaw), 10) : null;
+  const district = districtRaw
+    ? Number.parseInt(String(districtRaw), 10)
+    : null;
 
   if (!chamber || !state) {
     logger.warn("Unable to create member due to missing chamber or state", {
@@ -96,7 +101,9 @@ async function ensureMember(
       bioguideId: reference.bioguideId,
       firstName: normalizedNames.firstName || "Unknown",
       lastName: normalizedNames.lastName || "Unknown",
-      fullName: normalizedNames.fullName || `${normalizedNames.firstName} ${normalizedNames.lastName}`.trim(),
+      fullName:
+        normalizedNames.fullName ||
+        `${normalizedNames.firstName} ${normalizedNames.lastName}`.trim(),
       chamber,
       state,
       party,
@@ -108,7 +115,10 @@ async function ensureMember(
     },
   });
 
-  logger.info("Created member", { bioguideId: reference.bioguideId, memberId: created.id });
+  logger.info("Created member", {
+    bioguideId: reference.bioguideId,
+    memberId: created.id,
+  });
   return created.id;
 }
 
@@ -146,7 +156,10 @@ function buildBillData(
   };
 }
 
-function mapActionRecords(billId: string, actions: HydratedBillData["actions"]) {
+function mapActionRecords(
+  billId: string,
+  actions: HydratedBillData["actions"]
+) {
   return actions
     .map((action) => {
       const actionDate = parseDate(action.actionDate);
@@ -159,13 +172,17 @@ function mapActionRecords(billId: string, actions: HydratedBillData["actions"]) 
         text: action.text ?? "",
       };
     })
-    .filter((record): record is {
-      billId: string;
-      actionDate: Date;
-      actionType: string;
-      actionCode: string | null;
-      text: string;
-    } => Boolean(record));
+    .filter(
+      (
+        record
+      ): record is {
+        billId: string;
+        actionDate: Date;
+        actionType: string;
+        actionCode: string | null;
+        text: string;
+      } => Boolean(record)
+    );
 }
 
 function mapAmendmentRecords(
@@ -183,7 +200,9 @@ function mapAmendmentRecords(
 
     const statusDate = parseDate(amendment.statusDate) ?? new Date();
     const sponsorBioguide = amendment.sponsor?.bioguideId;
-    const sponsorId = sponsorBioguide ? sponsorLookup.get(sponsorBioguide) : undefined;
+    const sponsorId = sponsorBioguide
+      ? sponsorLookup.get(sponsorBioguide)
+      : undefined;
 
     const record: Prisma.AmendmentCreateManyInput = {
       billId,
@@ -209,7 +228,9 @@ export interface PersistOptions {
   logger?: Logger;
 }
 
-export async function persistHydratedBill(options: PersistOptions): Promise<PersistedBillResult> {
+export async function persistHydratedBill(
+  options: PersistOptions
+): Promise<PersistedBillResult> {
   const { data, client } = options;
   const logger = options.logger ?? createLogger({ context: "persist" });
   const identifier = buildBillIdentifier(data.bill);
@@ -227,11 +248,18 @@ export async function persistHydratedBill(options: PersistOptions): Promise<Pers
     );
 
     const sponsorReference = data.bill.sponsor ?? data.bill.sponsors?.[0];
-    const sponsorId = await ensureMember(sponsorReference, client, logger.child("member"));
+    const sponsorId = await ensureMember(
+      sponsorReference,
+      client,
+      logger.child("member")
+    );
 
     const billTypeRaw = data.bill.billType ?? data.bill.type ?? "";
     const billType = billTypeRaw.toLowerCase();
-    const billNumber = Number.parseInt(data.bill.billNumber ?? data.bill.number ?? "0", 10);
+    const billNumber = Number.parseInt(
+      data.bill.billNumber ?? data.bill.number ?? "0",
+      10
+    );
     if (!billType || Number.isNaN(billNumber) || !data.bill.congress) {
       logger.warn("Skipping bill due to incomplete identifier", {
         identifier,
@@ -288,7 +316,11 @@ export async function persistHydratedBill(options: PersistOptions): Promise<Pers
     }
 
     for (const cosponsor of data.cosponsors) {
-      const id = await ensureMember(cosponsor, client, logger.child("cosponsor"));
+      const id = await ensureMember(
+        cosponsor,
+        client,
+        logger.child("cosponsor")
+      );
       if (id) {
         cosponsorIds.push(id);
         if (cosponsor.bioguideId) {
@@ -315,7 +347,11 @@ export async function persistHydratedBill(options: PersistOptions): Promise<Pers
       await db.action.createMany({ data: actionRecords });
     }
 
-    const amendmentRecords = mapAmendmentRecords(billId, data.amendments, sponsorLookup);
+    const amendmentRecords = mapAmendmentRecords(
+      billId,
+      data.amendments,
+      sponsorLookup
+    );
     await db.amendment.deleteMany({ where: { billId } });
     if (amendmentRecords.length > 0) {
       await db.amendment.createMany({ data: amendmentRecords });

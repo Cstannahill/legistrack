@@ -1,19 +1,19 @@
 import { config as loadEnv } from "dotenv";
-import { createLogger } from "../logger";
-import { loadEnvironmentConfig } from "./config";
-import { CongressClient } from "./congressClient";
-import { hydrateBill } from "./hydration";
-import { persistHydratedBill } from "./persistence";
+import { createLogger } from "../../logger.js";
+import { loadEnvironmentConfig } from "./config.js";
+import { CongressClient } from "./congressClient.js";
+import { hydrateBill } from "./hydration.js";
+import { persistHydratedBill } from "./persistence.js";
 import type {
   IngestLegislationEvent,
   IngestLegislationResult,
   PersistedBillResult,
-} from "./types";
+} from "./types.js";
 import {
   buildBillIdentifier,
   determineLookupWindow,
   formatForCongressApi,
-} from "./utils";
+} from "./utils.js";
 
 loadEnv();
 
@@ -47,7 +47,6 @@ export async function handler(
   let offset = 0;
   const results: PersistedBillResult[] = [];
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const page = await client.fetchBillPage({
       congress: event.congress ?? envConfig.defaultCongress,

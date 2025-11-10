@@ -1,0 +1,20 @@
+{
+  "name": "ingest-legislation",
+  "version": "1.0.0",
+  "description": "Lambda function to ingest bills from congress API and insert into supabase db.",
+  "main": "handler.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsup"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.157",
+    "@types/node": "^24.6.2",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "date-fns": "^4.1.0",
+    "dotenv": "^17.2.3"
+  }
+}

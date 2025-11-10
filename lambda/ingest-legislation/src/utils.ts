@@ -6,15 +6,21 @@ import type {
   CongressBillDetail,
   CongressBillListItem,
   CongressPersonReference,
-} from "./types";
+} from "./types.js";
 
 const STATUS_MAPPINGS: Array<{ match: RegExp; status: BillStatus }> = [
   { match: /became (public )?law/i, status: "BECAME_LAW" },
   { match: /vetoed/i, status: "VETOED" },
-  { match: /presented to president|sent to president/i, status: "PRESENTED_TO_PRESIDENT" },
+  {
+    match: /presented to president|sent to president/i,
+    status: "PRESENTED_TO_PRESIDENT",
+  },
   { match: /passed senate|senate passed/i, status: "PASSED_SENATE" },
   { match: /passed house|house passed/i, status: "PASSED_HOUSE" },
-  { match: /reported by committee|committee reported/i, status: "REPORTED_BY_COMMITTEE" },
+  {
+    match: /reported by committee|committee reported/i,
+    status: "REPORTED_BY_COMMITTEE",
+  },
   { match: /referred to|committee/i, status: "REFERRED_TO_COMMITTEE" },
   { match: /failed/i, status: "FAILED" },
 ];
@@ -25,7 +31,9 @@ export function resolveStatus(
   fallbackDate: Date
 ): BillStatusResolution {
   const latestActionText = bill.latestAction?.text ?? actions[0]?.text ?? "";
-  const resolved = STATUS_MAPPINGS.find(({ match }) => match.test(latestActionText));
+  const resolved = STATUS_MAPPINGS.find(({ match }) =>
+    match.test(latestActionText)
+  );
   const status: BillStatus = resolved?.status ?? "INTRODUCED";
 
   const statusDateRaw = bill.latestAction?.actionDate ?? actions[0]?.actionDate;
@@ -74,7 +82,8 @@ export function buildBillIdentifier(
   item: CongressBillListItem | CongressBillDetail["bill"]
 ): string {
   const billType = "billType" in item ? item.billType ?? "" : item.type ?? "";
-  const billNumber = "billNumber" in item ? item.billNumber ?? "" : item.number ?? "";
+  const billNumber =
+    "billNumber" in item ? item.billNumber ?? "" : item.number ?? "";
   const congress = item.congress ?? "?";
   return `${congress}-${String(billType).toUpperCase()}-${billNumber}`;
 }

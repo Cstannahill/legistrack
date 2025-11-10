@@ -1,7 +1,7 @@
-import { createLogger, Logger } from "../logger";
-import type { CongressClient } from "./congressClient";
-import type { CongressBillListItem, HydratedBillData } from "./types";
-import { buildBillIdentifier } from "./utils";
+import { createLogger, Logger } from "../../logger.js";
+import type { CongressClient } from "./congressClient.js";
+import type { CongressBillListItem, HydratedBillData } from "./types.js";
+import { buildBillIdentifier } from "./utils.js";
 
 export interface HydrationOptions {
   client: CongressClient;
@@ -9,9 +9,12 @@ export interface HydrationOptions {
   logger?: Logger;
 }
 
-export async function hydrateBill(options: HydrationOptions): Promise<HydratedBillData> {
+export async function hydrateBill(
+  options: HydrationOptions
+): Promise<HydratedBillData> {
   const { client, bill, logger } = options;
-  const scopedLogger = logger?.child("hydrate") ?? createLogger({ context: "hydrate" });
+  const scopedLogger =
+    logger?.child("hydrate") ?? createLogger({ context: "hydrate" });
   const identifier = buildBillIdentifier(bill);
   scopedLogger.info("Hydrating bill", { identifier });
 

@@ -1,5 +1,5 @@
-import { CURRENT_CONGRESS } from "../../src/lib/constants";
-import type { EnvironmentConfig } from "./types";
+import { CURRENT_CONGRESS } from "../../../src/lib/constants.js";
+import type { EnvironmentConfig } from "./types.js";
 
 export function loadEnvironmentConfig(): EnvironmentConfig {
   const {
@@ -33,7 +33,8 @@ export function loadEnvironmentConfig(): EnvironmentConfig {
     );
   }
 
-  const minimumLogLevel = (MINIMUM_LOG_LEVEL as EnvironmentConfig["minimumLogLevel"]) ?? "info";
+  const minimumLogLevel =
+    (MINIMUM_LOG_LEVEL as EnvironmentConfig["minimumLogLevel"]) ?? "info";
   const validLevels = new Set(["debug", "info", "warn", "error"] as const);
 
   if (!validLevels.has(minimumLogLevel)) {
