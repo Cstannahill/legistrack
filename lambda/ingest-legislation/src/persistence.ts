@@ -1,6 +1,6 @@
 import type { BillStatus, Prisma } from "@prisma/client";
-import { db } from "../../../src/lib/db.js";
-import { getCongressGovBillUrl } from "../../../src/lib/utils/congress-url.js";
+import { db } from "./db.js";
+import { getCongressGovBillUrl } from "./congressUrl.js";
 import type { CongressClient } from "./congressClient.js";
 import { createLogger, Logger } from "../../logger.js";
 import type {
