@@ -21,7 +21,7 @@ export default async function HomePage() {
                 Track U.S. Legislation in Plain English
               </h1>
               <p className="mx-auto max-w-[700px] text-gray-500 md:text-xl dark:text-gray-400">
-                Stay informed about federal bills, executive orders, and government actions with AI-powered summaries
+                Stay informed about federal legislation, executive orders, and government actions with AI-powered summaries
                 that anyone can understand.
               </p>
             </div>
@@ -54,7 +54,6 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
-
       {/* Features Section */}
       <section className="w-full bg-gray-50 py-12 md:py-24 dark:bg-gray-900">
         <div className="container px-4 md:px-6">
@@ -112,9 +111,7 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
-
       {/* Data breakdown removed per request */}
-
       {/* CTA Section */}
       <section className="w-full py-12 md:py-24">
         <div className="container px-4 md:px-6">
