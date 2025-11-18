@@ -25,6 +25,7 @@ const supabase = getSupabaseClient({
   supabaseUrl: env.supabaseUrl,
   supabaseServiceRoleKey: env.supabaseServiceRoleKey,
 });
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const handler: Handler<
   IngestExecutiveOrdersEvent,
@@ -116,7 +117,7 @@ export const handler: Handler<
         });
       }
     }
-
+    await delay(1000);
     processedPages++;
     page++;
 

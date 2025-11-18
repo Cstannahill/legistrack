@@ -127,7 +127,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                             href={executiveOrder.fullTextUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                            className="inline-flex items-center gap-1 text-sm text-white hover:underline"
                         >
                             <ExternalLink className="h-3 w-3" />
                             Full Text

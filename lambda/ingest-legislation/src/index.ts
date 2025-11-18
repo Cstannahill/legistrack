@@ -29,6 +29,7 @@ const congressClient = new CongressClient({
   apiKey: env.congressApiKey,
   logger: baseLogger.child("congress"),
 });
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const handler: Handler<
   IngestLegislationEvent,
@@ -105,6 +106,7 @@ export const handler: Handler<
     }
 
     offset += bills.length;
+    await delay(1000);
     const nextUrl = page.pagination?.next;
     if (!nextUrl || bills.length < limit) {
       break;
