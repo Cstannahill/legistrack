@@ -39,7 +39,7 @@ export default function LoginPage() {
 
     return (
         <div className="min-h-[70vh] flex items-center justify-center py-12">
-            <div className="w-full max-w-lg rounded-lg border bg-white p-8 shadow-md">
+            <div className="w-full max-w-lg rounded-lg border bg-neutral-800 p-8 shadow-md">
                 <h1 className="mb-6 text-3xl font-semibold">Sign in to LegisTrack</h1>
                 <form onSubmit={submit} className="space-y-4">
                     <div>

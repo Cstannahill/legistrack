@@ -39,14 +39,14 @@ function BillContent({ bill }: { bill: BillContentBill }) {
     const detailedSummary = bill.summaries?.find((s) => s.summaryType === 'DETAILED')
 
     return (
-        <Tabs defaultValue="summary" className="space-y-6">
-            <TabsList>
-                <TabsTrigger value="summary">Summary</TabsTrigger>
-                <TabsTrigger value="fulltext">Full Text</TabsTrigger>
-                <TabsTrigger value="details">Details</TabsTrigger>
-                <TabsTrigger value="actions">Actions</TabsTrigger>
+        <Tabs defaultValue="summary" className="space-y-6 text-zinc-800">
+            <TabsList >
+                <TabsTrigger className="text-zinc-500" value="summary">Summary</TabsTrigger>
+                <TabsTrigger className="text-zinc-500" value="fulltext">Full Text</TabsTrigger>
+                <TabsTrigger className="text-zinc-500" value="details">Details</TabsTrigger>
+                <TabsTrigger className="text-zinc-500" value="actions">Actions</TabsTrigger>
                 {bill.cosponsors && bill.cosponsors.length > 0 && (
-                    <TabsTrigger value="cosponsors">
+                    <TabsTrigger className="text-zinc-500" value="cosponsors">
                         Cosponsors ({bill.cosponsors.length})
                     </TabsTrigger>
                 )}
@@ -154,7 +154,7 @@ function BillContent({ bill }: { bill: BillContentBill }) {
             </TabsContent>
 
             {/* Full Text Tab */}
-            <TabsContent value="fulltext" className="space-y-4">
+            <TabsContent value="fulltext" className="space-y-4 grid-cols-3">
                 {bill.fullText ? (
                     <LegislativeFullText
                         text={bill.fullText}
@@ -407,7 +407,7 @@ export default async function BillDetailPage({ params }: PageProps) {
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
                     <div className="flex-1">
                         <div className="mb-2 flex items-center gap-2 flex-wrap">
-                            <Badge variant="outline" className="font-mono">
+                            <Badge variant="outline" className="font-mono text-white">
                                 {billIdentifier}
                             </Badge>
                             {companions.map((companion) => (
@@ -415,7 +415,7 @@ export default async function BillDetailPage({ params }: PageProps) {
                                     {companion.billType.toUpperCase()} {companion.billNumber}
                                 </Badge>
                             ))}
-                            <span className="text-sm text-muted-foreground">
+                            <span className="text-sm text-foreground">
                                 {bill.congress}th Congress
                             </span>
                             <StatusBadge status={bill.currentStatus} />
@@ -487,10 +487,10 @@ export default async function BillDetailPage({ params }: PageProps) {
                         href={getBillCongressUrl(bill)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+                        className="inline-flex items-center gap-2 text-sm hover:underline text-foreground"
                     >
                         View on Congress.gov
-                        <ExternalLink className="h-3 w-3" />
+                        <ExternalLink className="h-3 w-3 text-foreground" />
                     </a>
                 </div>
             </div>

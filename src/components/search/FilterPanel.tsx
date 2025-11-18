@@ -44,6 +44,23 @@ export function FilterPanel({ categories }: FilterPanelProps) {
         router.push(`/bills?${params.toString()}`)
     }
 
+    const handleTypeChange = (value: string) => {
+        const params = new URLSearchParams(searchParams.toString())
+        if (value === 'ALL') {
+            params.delete('type')
+        } else {
+            params.set('type', value)
+        }
+
+        if (value === 'EXECUTIVE_ORDERS') {
+            params.delete('congress')
+            params.delete('status')
+        }
+
+        params.set('page', '1')
+        router.push(`/bills?${params.toString()}`)
+    }
+
     const clearFilters = () => {
         router.push('/bills')
     }
@@ -64,33 +81,11 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                 </div>
             </div>
 
-            {/* Show Incomplete Bills Toggle - Only for bills
-            {currentType !== 'EXECUTIVE_ORDERS' && (
-                <div className="rounded-lg border bg-muted/50 p-4">
-                    <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                            <label htmlFor="show-incomplete" className="text-sm font-medium">
-                                Show Incomplete Bills
-                            </label>
-                            <p className="text-xs text-muted-foreground">
-                                Include bills without full text
-                            </p>
-                        </div>
-                        <Switch
-                            id="show-incomplete"
-                            checked={showIncomplete}
-                            onCheckedChange={(checked) => {
-                                updateFilter('showIncomplete', checked ? 'true' : null)
-                            }}
-                        />
-                    </div>
-                </div>
-            )} */}
 
             {/* Type Filter */}
-            {/* <div>
+            <div>
                 <label className="mb-2 block text-sm font-medium">Type</label>
-                <Select value={currentType} onValueChange={(value) => updateFilter('type', value === 'ALL' ? null : value)}>
+                <Select value={currentType} onValueChange={handleTypeChange}>
                     <SelectTrigger>
                         <SelectValue />
                     </SelectTrigger>
@@ -102,7 +97,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                         ))}
                     </SelectContent>
                 </Select>
-            </div> */}
+            </div>
 
             {/* Congress Filter - Only for bills */}
             {currentType !== 'EXECUTIVE_ORDERS' && (

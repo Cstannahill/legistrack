@@ -1,11 +1,10 @@
-// ExecutiveOrderCard Component - Display executive order summary in a card
+// ExecutiveOrderCard Component - Improved EO card aligned with bill cards
 import Link from 'next/link'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Calendar, User, FileText, Sparkles } from 'lucide-react'
 import { formatDate } from '@/lib/utils/date'
 import { truncate } from '@/lib/utils/formatting'
 import { getCategoryBySlug, type CategorySlug } from '@/lib/utils/category-helper'
-import { Calendar, User, FileText, Sparkles } from 'lucide-react'
 import { EXECUTIVE_ORDER_TYPE_COLORS, EXECUTIVE_ORDER_TYPE_LABELS } from '@/lib/constants'
 
 interface ExecutiveOrderCardProps {
@@ -38,28 +37,68 @@ export function ExecutiveOrderCard({ executiveOrder }: ExecutiveOrderCardProps) 
     const typeColor = EXECUTIVE_ORDER_TYPE_COLORS[executiveOrder.executiveOrderType] || 'bg-gray-100 text-gray-800'
 
     return (
-        <Link href={`/bills/eo/${executiveOrder.id}`}>
-            <Card className="h-full transition-shadow hover:shadow-lg">
-                <CardHeader>
-                    <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1">
-                            <div className="mb-1 flex items-center gap-2 flex-wrap">
-                                <Badge variant="outline" className="font-mono text-xs">
-                                    {eoIdentifier}
+        <Link
+            href={`/bills/eo/${executiveOrder.id}`}
+            aria-label={`Open ${eoIdentifier} ${executiveOrder.title}`}
+        >
+            <article className="lt-card lt-card-grid h-full">
+                <div className="flex items-start justify-between gap-3 w-full">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <Badge variant="outline" className="font-mono text-xs">
+                            {eoIdentifier}
+                        </Badge>
+                        <Badge className={`text-xs ${typeColor}`}>
+                            {typeLabel}
+                        </Badge>
+                    </div>
+                </div>
+
+                <h3 className="lt-title text-base md:text-lg leading-snug">
+                    {truncate(executiveOrder.title, 140)}
+                </h3>
+
+                {summary && (
+                    <p className="text-sm text-muted-foreground line-clamp-3">
+                        {truncate(summary, 200)}
+                    </p>
+                )}
+
+                {executiveOrder.categories.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                        {executiveOrder.categories.slice(0, 3).map((category) => {
+                            const categoryData = getCategoryBySlug(category.slug as CategorySlug)
+                            const color = categoryData?.color
+                            return (
+                                <Badge
+                                    key={category.id}
+                                    variant="secondary"
+                                    className="text-xs"
+                                    style={{
+                                        backgroundColor: color ? `${color}15` : undefined,
+                                        color: color || undefined,
+                                    }}
+                                >
+                                    {category.name}
                                 </Badge>
-                                <Badge className={`text-xs ${typeColor}`}>
-                                    {typeLabel}
-                                </Badge>
-                            </div>
-                            <CardTitle className="text-lg leading-tight">
-                                {truncate(executiveOrder.title, 120)}
-                            </CardTitle>
+                            )
+                        })}
+                    </div>
+                )}
+
+                <div className="mt-auto pt-3 border-t border-border">
+                    <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1 flex-1 min-w-0">
+                            <User className="h-3 w-3 flex-shrink-0" />
+                            <span className="truncate">{executiveOrder.presidentName}</span>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                            <Calendar className="h-3 w-3" />
+                            <span>{formatDate(executiveOrder.signingDate)}</span>
                         </div>
                     </div>
 
-                    {/* Availability Indicators */}
                     {(hasSummary || hasFullText) && (
-                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                        <div className="mt-2 flex items-center gap-2">
                             {hasSummary && (
                                 <Badge
                                     variant="secondary"
@@ -80,51 +119,8 @@ export function ExecutiveOrderCard({ executiveOrder }: ExecutiveOrderCardProps) 
                             )}
                         </div>
                     )}
-                </CardHeader>
-
-                <CardContent className="space-y-3">
-                    {summary && (
-                        <CardDescription className="line-clamp-3">
-                            {truncate(summary, 200)}
-                        </CardDescription>
-                    )}
-
-                    {executiveOrder.categories.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                            {executiveOrder.categories.slice(0, 3).map((category) => {
-                                const categoryData = getCategoryBySlug(category.slug as CategorySlug)
-                                const color = categoryData?.color
-                                return (
-                                    <Badge
-                                        key={category.id}
-                                        variant="secondary"
-                                        className="text-xs"
-                                        style={{
-                                            backgroundColor: color ? `${color}15` : undefined,
-                                            color: color || undefined,
-                                        }}
-                                    >
-                                        {category.name}
-                                    </Badge>
-                                )
-                            })}
-                        </div>
-                    )}
-                </CardContent>
-
-                <CardFooter className="text-xs text-muted-foreground">
-                    <div className="flex w-full items-center justify-between">
-                        <div className="flex items-center gap-1">
-                            <User className="h-3 w-3" />
-                            <span>{executiveOrder.presidentName}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            <span>{formatDate(executiveOrder.signingDate)}</span>
-                        </div>
-                    </div>
-                </CardFooter>
-            </Card>
+                </div>
+            </article>
         </Link>
     )
 }

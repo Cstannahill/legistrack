@@ -1,4 +1,4 @@
-import { createLogger, Logger } from "../../logger.js";
+import { createLogger, Logger } from "./logger.js";
 import type { CongressClient } from "./congressClient.js";
 import type { CongressBillListItem, HydratedBillData } from "./types.js";
 import { buildBillIdentifier } from "./utils.js";

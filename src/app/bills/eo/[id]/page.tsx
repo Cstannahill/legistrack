@@ -60,7 +60,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                 <div className="flex items-start justify-between gap-4">
                     <div className="flex-1">
                         <div className="mb-2 flex flex-wrap items-center gap-2">
-                            <Badge variant="outline" className="font-mono">
+                            <Badge variant="outline" className="font-mono text-white">
                                 {eoIdentifier}
                             </Badge>
                             <Badge className={typeColor}>
@@ -74,7 +74,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                 </div>
 
                 {/* Metadata */}
-                <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+                <div className="flex flex-wrap gap-4 text-sm text-stone-300">
                     <div className="flex items-center gap-1">
                         <User className="h-4 w-4" />
                         <span>{executiveOrder.presidentName}</span>
@@ -116,7 +116,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                             href={executiveOrder.federalRegisterUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                            className="inline-flex items-center gap-1 text-sm text-white hover:underline"
                         >
                             <ExternalLink className="h-3 w-3" />
                             Federal Register
@@ -139,9 +139,9 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
             {/* Content Tabs */}
             <Tabs defaultValue="summary" className="space-y-6">
                 <TabsList>
-                    <TabsTrigger value="summary">Summary</TabsTrigger>
-                    <TabsTrigger value="fulltext">Full Text</TabsTrigger>
-                    <TabsTrigger value="details">Details</TabsTrigger>
+                    <TabsTrigger className="text-zinc-500" value="summary">Summary</TabsTrigger>
+                    <TabsTrigger className="text-zinc-500" value="fulltext">Full Text</TabsTrigger>
+                    <TabsTrigger className="text-zinc-500" value="details">Details</TabsTrigger>
                 </TabsList>
 
                 {/* Summary Tab */}
@@ -234,7 +234,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                 </TabsContent>
 
                 {/* Full Text Tab */}
-                <TabsContent value="fulltext" className="space-y-4">
+                <TabsContent value="fulltext" className="space-y-4 grid-cols-3">
                     {executiveOrder.fullText ? (
                         <LegislativeFullText
                             text={formatExecutiveOrderText(executiveOrder.fullText)}

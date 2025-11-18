@@ -1,0 +1,52 @@
+{
+  "id": "openai/gpt-oss-20b:free",
+  "canonical_slug": "openai/gpt-oss-20b",
+  "hugging_face_id": "openai/gpt-oss-20b",
+  "name": "OpenAI: gpt-oss-20b (free)",
+  "created": 1754414229,
+  "description": "gpt-oss-20b is an open-weight 21B parameter model released by OpenAI under the Apache 2.0 license. It uses a Mixture-of-Experts (MoE) architecture with 3.6B active parameters per forward pass, optimized for lower-latency inference and deployability on consumer or single-GPU hardware. The model is trained in OpenAI’s Harmony response format and supports reasoning level configuration, fine-tuning, and agentic capabilities including function calling, tool use, and structured outputs.",
+  "context_length": 131072,
+  "architecture": {
+    "modality": "text->text",
+    "input_modalities": ["text"],
+    "output_modalities": ["text"],
+    "tokenizer": "GPT",
+    "instruct_type": null
+  },
+  "pricing": {
+    "prompt": "0",
+    "completion": "0",
+    "request": "0",
+    "image": "0",
+    "web_search": "0",
+    "internal_reasoning": "0"
+  },
+  "top_provider": {
+    "context_length": 131072,
+    "max_completion_tokens": 131072,
+    "is_moderated": false
+  },
+  "per_request_limits": null,
+  "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "max_tokens",
+    "presence_penalty",
+    "reasoning",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_p"
+  ],
+  "default_parameters": {
+    "temperature": null,
+    "top_p": null,
+    "frequency_penalty": null
+  }
+}

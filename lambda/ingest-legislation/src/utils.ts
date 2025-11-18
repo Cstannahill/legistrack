@@ -1,6 +1,6 @@
-import { addDays } from "date-fns";
-import type { BillStatus } from "@prisma/client";
+import { addDays } from "./addDays.js";
 import type {
+  BillStatus,
   BillStatusResolution,
   CongressBillAction,
   CongressBillDetail,

@@ -2,12 +2,13 @@ import { CURRENT_CONGRESS } from "./constants.js";
 import type { EnvironmentConfig } from "./types.js";
 
 export function loadEnvironmentConfig(): EnvironmentConfig {
-  const {
-    CONGRESS_API_KEY,
-    INGEST_LOOKBACK_DAYS,
-    MINIMUM_LOG_LEVEL,
-    TARGET_CONGRESS,
-  } = process.env;
+  const CONGRESS_API_KEY = process.env.CONGRESS_API_KEY;
+  const INGEST_LOOKBACK_DAYS = process.env.INGEST_LOOKBACK_DAYS;
+  const MINIMUM_LOG_LEVEL = process.env.MINIMUM_LOG_LEVEL;
+  const TARGET_CONGRESS = process.env.TARGET_CONGRESS;
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_SERVICE_ROLE_KEY =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
 
   if (!CONGRESS_API_KEY) {
     throw new Error("CONGRESS_API_KEY is required to ingest legislation");
@@ -43,10 +44,22 @@ export function loadEnvironmentConfig(): EnvironmentConfig {
     );
   }
 
+  if (!SUPABASE_URL) {
+    throw new Error("SUPABASE_URL must be configured");
+  }
+
+  if (!SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_KEY) must be configured"
+    );
+  }
+
   return {
     congressApiKey: CONGRESS_API_KEY,
     lookbackDays,
     defaultCongress,
     minimumLogLevel,
+    supabaseUrl: SUPABASE_URL,
+    supabaseServiceRoleKey: SUPABASE_SERVICE_ROLE_KEY,
   };
 }

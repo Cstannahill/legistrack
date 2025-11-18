@@ -13,7 +13,7 @@ const db = new PrismaClient();
 
 // Configuration from environment variables
 const FETCH_TEXT = process.env.FETCH_TEXT === "true"; // Default false for speed
-const LIMIT = parseInt(process.env.LIMIT || "10000");
+const LIMIT = parseInt(process.env.LIMIT || "250");
 const FETCH_ALL_TYPES = process.env.FETCH_ALL_TYPES === "true"; // Default false (only executive orders)
 // Optional: start at a specific page offset (0-based). Set PAGE_OFFSET or OFFSET.
 const PAGE_OFFSET = (() => {

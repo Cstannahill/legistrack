@@ -1,5 +1,3 @@
-import type { BillStatus, Chamber } from "@prisma/client";
-
 export interface IngestLegislationEvent {
   startDate?: string;
   endDate?: string;
@@ -29,7 +27,23 @@ export interface EnvironmentConfig {
   lookbackDays: number;
   defaultCongress: number;
   minimumLogLevel: "debug" | "info" | "warn" | "error";
+  supabaseUrl: string;
+  supabaseServiceRoleKey: string;
 }
+
+export type BillStatus =
+  | "INTRODUCED"
+  | "REFERRED_TO_COMMITTEE"
+  | "REPORTED_BY_COMMITTEE"
+  | "PASSED_HOUSE"
+  | "PASSED_SENATE"
+  | "RESOLVING_DIFFERENCES"
+  | "PRESENTED_TO_PRESIDENT"
+  | "BECAME_LAW"
+  | "VETOED"
+  | "FAILED";
+
+export type Chamber = "HOUSE" | "SENATE";
 
 export interface CongressBillListItem {
   congress: number;
@@ -123,11 +137,15 @@ export interface CongressTextFormat {
 export interface CongressBillTextVersion {
   type?: string;
   date?: string;
-  formats?: CongressTextFormat[];
+  formats?: CongressTextFormat[] | { items?: CongressTextFormat[] };
 }
 
 export interface CongressBillTextResponse {
-  textVersions?: CongressBillTextVersion[];
+  textVersions?:
+    | CongressBillTextVersion[]
+    | {
+        items?: CongressBillTextVersion[];
+      };
 }
 
 export interface CongressBillAction {
