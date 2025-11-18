@@ -12,10 +12,10 @@ export function LegislativeFullText({ text, billIdentifier }: LegislativeFullTex
     const parsed = parseLegislativeText(text);
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-4 w-full max-w-5xl mx-auto px-3 sm:px-0">
             {/* Header Information Card */}
             {(parsed.header || parsed.billInfo) && (
-                <Card className="border-l-4 border-l-slate-500 bg-slate-50/50 dark:bg-slate-950/20">
+                <Card className="border-l-4 border-l-slate-500 bg-slate-50/50 dark:bg-slate-950/20 w-full">
                     <div className="p-4 space-y-3">
                         {parsed.header && (
                             <div className="flex items-start gap-3">
@@ -48,10 +48,10 @@ export function LegislativeFullText({ text, billIdentifier }: LegislativeFullTex
             )}
 
             {/* Main Legislative Text Card */}
-            <Card>
-                <div className="p-6 mx-auto">
+            <Card className="lg:w-auto w-full overflow-hidden">
+                <div className="p-6 lg:p-10 lg:mx-auto">
                     <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed">
+                        <pre className="whitespace-pre-wrap break-words font-mono text-xs sm:text-sm leading-relaxed">
                             {parsed.content || cleaned}
                         </pre>
                     </div>
