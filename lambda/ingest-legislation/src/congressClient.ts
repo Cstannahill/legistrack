@@ -36,6 +36,9 @@ const TEXT_FORMAT_PRIORITY = [
   "PDF",
   "HTML",
 ];
+const CONGRESS_DOWNLOAD_BASE = "https://www.congress.gov";
+const REQUEST_INTERVAL_MS = 1000;
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function normalizeBillType(type: string): string {
   return type.trim().toLowerCase();
@@ -76,7 +79,9 @@ function selectFormat(
 
 function buildDownloadUrl(source: string, apiKey: string): string {
   try {
-    const url = new URL(source, CONGRESS_API_BASE);
+    const url = source.startsWith("http")
+      ? new URL(source)
+      : new URL(source, CONGRESS_DOWNLOAD_BASE);
     if (!url.searchParams.has("api_key")) {
       url.searchParams.set("api_key", apiKey);
     }
@@ -90,38 +95,63 @@ function buildDownloadUrl(source: string, apiKey: string): string {
 export class CongressClient {
   private readonly apiKey: string;
   private readonly logger: Logger;
+  private requestChain: Promise<void> = Promise.resolve();
+  private lastRequestTime = 0;
 
   constructor(options: ClientOptions) {
     this.apiKey = options.apiKey;
     this.logger = options.logger ?? createLogger({ context: "CongressClient" });
   }
 
+  private runWithThrottle<T>(operation: () => Promise<T>): Promise<T> {
+    const execute = async () => {
+      const now = Date.now();
+      const wait = Math.max(
+        0,
+        this.lastRequestTime + REQUEST_INTERVAL_MS - now
+      );
+      if (wait > 0) {
+        await delay(wait);
+      }
+      this.lastRequestTime = Date.now();
+      return operation();
+    };
+    const result = this.requestChain.then(execute, execute);
+    this.requestChain = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
   private async fetchJson<T>(
     path: string,
     params: Record<string, string> = {}
   ): Promise<T> {
-    const url = new URL(`${CONGRESS_API_BASE}${path}`);
-    url.searchParams.set("api_key", this.apiKey);
-    url.searchParams.set("format", "json");
+    return this.runWithThrottle(async () => {
+      const url = new URL(`${CONGRESS_API_BASE}${path}`);
+      url.searchParams.set("api_key", this.apiKey);
+      url.searchParams.set("format", "json");
 
-    for (const [key, value] of Object.entries(params)) {
-      url.searchParams.set(key, value);
-    }
+      for (const [key, value] of Object.entries(params)) {
+        url.searchParams.set(key, value);
+      }
 
-    this.logger.debug("Requesting Congress API", { url: url.toString() });
+      this.logger.debug("Requesting Congress API", { url: url.toString() });
 
-    const response = await fetch(url.toString(), {
-      headers: { Accept: "application/json" },
+      const response = await fetch(url.toString(), {
+        headers: { Accept: "application/json" },
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(
+          `Congress API request failed (${response.status} ${response.statusText}): ${body}`
+        );
+      }
+
+      return (await response.json()) as T;
     });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(
-        `Congress API request failed (${response.status} ${response.statusText}): ${body}`
-      );
-    }
-
-    return (await response.json()) as T;
   }
 
   async fetchBillPage(
@@ -192,9 +222,11 @@ export class CongressClient {
 
     const downloadUrl = buildDownloadUrl(selectedFormat.url, this.apiKey);
     try {
-      const textResponse = await fetch(downloadUrl, {
-        headers: { Accept: "text/plain, text/html;q=0.9, */*;q=0.1" },
-      });
+      const textResponse = await this.runWithThrottle(() =>
+        fetch(downloadUrl, {
+          headers: { Accept: "text/plain, text/html;q=0.9, */*;q=0.1" },
+        })
+      );
       if (textResponse.ok) {
         const raw = await textResponse.text();
         const content = raw.includes("<pre")

@@ -22,14 +22,23 @@ export async function hydrateBill(
   const billType = bill.type;
   const billNumber = bill.number;
 
-  const [detail, actionsResponse, amendmentsResponse, cosponsors, text] =
+  const [detail, actionsResponse, amendmentsResponse, cosponsors] =
     await Promise.all([
       client.fetchBillDetail(congress, billType, billNumber),
       client.fetchBillActions(congress, billType, billNumber),
       client.fetchBillAmendments(congress, billType, billNumber),
       client.fetchBillCosponsors(congress, billType, billNumber),
-      client.fetchBillText(congress, billType, billNumber),
     ]);
+
+  let text: HydratedBillData["text"];
+  try {
+    text = await client.fetchBillText(congress, billType, billNumber);
+  } catch (error) {
+    scopedLogger.warn("Failed to fetch bill text, will retry later", {
+      identifier,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   const actions = detail.bill.actions?.items ?? actionsResponse.actions ?? [];
   const amendments = amendmentsResponse.amendments ?? [];

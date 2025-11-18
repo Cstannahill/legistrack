@@ -6,6 +6,28 @@ import type {
 
 const BASE_URL = "https://www.federalregister.gov/api/v1";
 const DEFAULT_PER_PAGE = 100;
+const REQUEST_INTERVAL_MS = 1000;
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+let requestChain: Promise<void> = Promise.resolve();
+let lastRequestTime = 0;
+
+function withThrottle<T>(operation: () => Promise<T>): Promise<T> {
+  const run = async () => {
+    const now = Date.now();
+    const wait = Math.max(0, lastRequestTime + REQUEST_INTERVAL_MS - now);
+    if (wait > 0) {
+      await delay(wait);
+    }
+    lastRequestTime = Date.now();
+    return operation();
+  };
+  const result = requestChain.then(run, run);
+  requestChain = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
 
 interface TextContentResult {
   content: string | null;
@@ -61,9 +83,11 @@ export async function fetchExecutiveOrders(
     );
   }
 
-  const response = await fetch(url.toString(), {
-    headers: { Accept: "application/json" },
-  });
+  const response = await withThrottle(() =>
+    fetch(url.toString(), {
+      headers: { Accept: "application/json" },
+    })
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -80,11 +104,10 @@ export async function fetchExecutiveOrders(
 export async function fetchExecutiveOrderDetails(
   documentNumber: string
 ): Promise<FederalRegisterDocument> {
-  const response = await fetch(
-    `${BASE_URL}/documents/${documentNumber}.json`,
-    {
+  const response = await withThrottle(() =>
+    fetch(`${BASE_URL}/documents/${documentNumber}.json`, {
       headers: { Accept: "application/json" },
-    }
+    })
   );
 
   if (!response.ok) {
@@ -101,7 +124,9 @@ export async function fetchExecutiveOrderFullText(
   documentNumber: string
 ): Promise<TextContentResult> {
   const url = `${BASE_URL}/documents/${documentNumber}.json?fields[]=full_text_xml_url&fields[]=body_html_url&fields[]=raw_text_url`;
-  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  const response = await withThrottle(() =>
+    fetch(url, { headers: { Accept: "application/json" } })
+  );
 
   if (!response.ok) {
     return { content: null, url: null };
@@ -117,7 +142,7 @@ export async function fetchExecutiveOrderFullText(
 
   for (const candidate of candidateUrls) {
     try {
-      const textResponse = await fetch(candidate);
+      const textResponse = await withThrottle(() => fetch(candidate));
       if (textResponse.ok) {
         const text = await textResponse.text();
         return { content: text, url: candidate };
