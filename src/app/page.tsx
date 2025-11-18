@@ -27,7 +27,7 @@ export default async function HomePage() {
             </div>
             <div className="space-x-4">
               <Link href="/bills">
-                <Button size="lg">
+                <Button size="lg" className="text-white">
                   Browse Legislation
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
@@ -42,12 +42,12 @@ export default async function HomePage() {
             {/* Big stat */}
             <div className="mt-8 flex items-center gap-6">
               <div className="flex items-center rounded-lg lt-hero-stat px-6 py-4 shadow-lg">
-                <BookText className="mr-4 h-8 w-8 text-primary" />
+                <BookText className="h-8 w-8 text-primary justify-self-center" /><div className="text-3xl font-bold text-center" style={{ background: 'linear-gradient(90deg,#7C5CFF,#6EE7B7)', WebkitBackgroundClip: 'text', color: 'transparent' }}>
+                  {complete.toLocaleString()}
+                </div>
                 <div className="text-left">
-                  <div className="text-sm lt-muted">Pieces of Legislation Summarized</div>
-                  <div className="text-3xl font-bold" style={{ background: 'linear-gradient(90deg,#7C5CFF,#6EE7B7)', WebkitBackgroundClip: 'text', color: 'transparent' }}>
-                    {complete.toLocaleString()}
-                  </div>
+                  <div className="text-sm text-stone-200">Pieces of Legislation Summarized</div>
+
                 </div>
               </div>
             </div>
@@ -55,7 +55,7 @@ export default async function HomePage() {
         </div>
       </section>
       {/* Features Section */}
-      <section className="w-full bg-gray-50 py-12 md:py-24 dark:bg-gray-900">
+      <section className="w-full bg-stone-500 py-12 md:py-24 dark:bg-gray-900">
         <div className="container px-4 md:px-6">
           <h2 className="mb-12 text-center text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl">
             How It Works
@@ -126,7 +126,7 @@ export default async function HomePage() {
             </div>
             <div className="space-x-4">
               <Link href="/bills">
-                <Button size="lg">Get Started</Button>
+                <Button size="lg" className='text-stone-200'>Get Started</Button>
               </Link>
             </div>
           </div>

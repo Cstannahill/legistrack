@@ -44,7 +44,7 @@ export function Header() {
                                 <Button variant="ghost" size="sm">Login</Button>
                             </Link>
                             <Link href="/register">
-                                <Button size="sm">Register</Button>
+                                <Button size="sm" className="text-white">Register</Button>
                             </Link>
                         </div>
                     )}

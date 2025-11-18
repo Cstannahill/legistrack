@@ -8,7 +8,7 @@ import { FilterPanel } from '@/components/search/FilterPanel'
 import { MobileFilterDrawer } from '@/components/search/MobileFilterDrawer'
 import { CURRENT_CONGRESS, CACHE_DURATIONS } from '@/lib/constants'
 import { cachedCount } from '@/lib/countCache'
-import { getCategoryBySlug, type CategorySlug } from '@/lib/utils/category-helper'
+import { getAllCategories, getCategoryBySlug, type CategorySlug } from '@/lib/utils/category-helper'
 
 interface PageProps {
     searchParams: Promise<{
@@ -34,8 +34,11 @@ export default async function BillsPage({ searchParams }: PageProps) {
 
     // Determine what to fetch based on type filter
     // If status filter is applied, only fetch bills (EOs don't have status)
+    const hasCongressFilter = !!params.congress
     const shouldFetchBills = legislationType === 'ALL' || legislationType === 'BILLS'
-    const shouldFetchEOs = (legislationType === 'ALL' || legislationType === 'EXECUTIVE_ORDERS') && !params.status
+    const shouldFetchEOs =
+        legislationType === 'EXECUTIVE_ORDERS' ||
+        (legislationType === 'ALL' && !params.status && !hasCongressFilter)
 
     // Build where clause for bills
     const billWhere: Record<string, unknown> = {}
@@ -201,6 +204,13 @@ export default async function BillsPage({ searchParams }: PageProps) {
     // This guarantees no duplicate items across pages and consistent ranges.
 
     // First get counts & categories (cheap) in parallel
+    const fallbackCategories = getAllCategories().map(cat => ({
+        id: cat.id,
+        name: cat.name,
+        slug: cat.slug,
+        color: cat.color,
+    }))
+
     const [billCount, eoCount, dbCategories] = await Promise.all([
         shouldFetchBills
             ? cachedCount(
@@ -219,6 +229,9 @@ export default async function BillsPage({ searchParams }: PageProps) {
         db.category.findMany({
             orderBy: { name: 'asc' },
             select: { id: true, name: true, slug: true, color: true },
+        }).catch(error => {
+            console.error('Failed to load categories from DB, using fallback list', error)
+            return fallbackCategories
         }),
     ])
 
@@ -277,7 +290,7 @@ export default async function BillsPage({ searchParams }: PageProps) {
 
     // Always use unified function for ALL view (parameterized) regardless of filters; incomplete toggle still forces bill filter logic client-side
     // BUT: don't use unified if status is selected (EOs don't have status, so only bills should show)
-    const useUnified = legislationType === 'ALL' && !params.status
+    const useUnified = legislationType === 'ALL' && !params.status && !params.congress
 
     if (useUnified) {
         // Map filters to function parameters; showIncomplete bypass handled by setting bill completeness predicate above (function expects only complete rows)

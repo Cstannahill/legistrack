@@ -55,8 +55,8 @@ BEGIN
         e.title::text AS title,
         NULL::public."BillStatus" AS "currentStatus",
         CASE
-          WHEN %I = 'publicationDate' AND e."publicationDate" IS NOT NULL THEN e."publicationDate"
-          WHEN %I = 'updatedAt' AND e."updatedAt" IS NOT NULL THEN e."updatedAt"
+          WHEN %L = 'publicationDate' AND e."publicationDate" IS NOT NULL THEN e."publicationDate"
+          WHEN %L = 'updatedAt' AND e."updatedAt" IS NOT NULL THEN e."updatedAt"
           ELSE e."signingDate"
         END::timestamp AS sort_date,
         e."presidentName"::text AS "presidentName",

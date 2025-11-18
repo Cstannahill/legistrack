@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { fetchExecutiveOrderFullText } from "@/lib/api/federal-register";
 
 // Rate limiting delay (to be nice to the API)
-const DELAY_MS = 300;
+const DELAY_MS = 1000;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

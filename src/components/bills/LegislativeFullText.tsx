@@ -49,7 +49,7 @@ export function LegislativeFullText({ text, billIdentifier }: LegislativeFullTex
 
             {/* Main Legislative Text Card */}
             <Card>
-                <div className="p-6">
+                <div className="p-6 mx-auto">
                     <div className="prose prose-sm max-w-none dark:prose-invert">
                         <pre className="whitespace-pre-wrap font-mono text-sm leading-relaxed">
                             {parsed.content || cleaned}

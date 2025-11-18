@@ -1,5 +1,5 @@
-import { config as loadEnv } from "dotenv";
-import { createLogger } from "../../logger.js";
+import type { Handler } from "aws-lambda";
+import { createLogger } from "./logger.js";
 import { loadEnvironmentConfig } from "./config.js";
 import { CongressClient } from "./congressClient.js";
 import { hydrateBill } from "./hydration.js";
@@ -14,33 +14,43 @@ import {
   determineLookupWindow,
   formatForCongressApi,
 } from "./utils.js";
+import { getSupabaseClient } from "./db.js";
 
-loadEnv();
+const env = loadEnvironmentConfig();
+const baseLogger = createLogger({
+  context: "ingest-legislation",
+  minimumLevel: env.minimumLogLevel,
+});
+const supabase = getSupabaseClient({
+  supabaseUrl: env.supabaseUrl,
+  supabaseServiceRoleKey: env.supabaseServiceRoleKey,
+});
+const congressClient = new CongressClient({
+  apiKey: env.congressApiKey,
+  logger: baseLogger.child("congress"),
+});
 
-export async function handler(
-  event: IngestLegislationEvent = {}
-): Promise<IngestLegislationResult> {
-  const envConfig = loadEnvironmentConfig();
-  const logger = createLogger({
-    context: "ingest-legislation",
-    minimumLevel: envConfig.minimumLogLevel,
-  });
-
+export const handler: Handler<
+  IngestLegislationEvent,
+  IngestLegislationResult
+> = async (event = {}) => {
+  const runId = Math.random().toString(36).slice(2, 10);
+  const logger = baseLogger.child(`run:${runId}`);
+  const lookbackDays = event?.lookbackDays ?? env.lookbackDays;
+  const targetCongress = event?.congress ?? env.defaultCongress;
   const window = determineLookupWindow(
-    event.lookbackDays ?? envConfig.lookbackDays,
+    lookbackDays,
     event.startDate,
     event.endDate
   );
 
   logger.info("Starting legislation ingestion", {
+    runId,
     start: window.from.toISOString(),
     end: window.to.toISOString(),
-    congress: event.congress ?? envConfig.defaultCongress,
-  });
-
-  const client = new CongressClient({
-    apiKey: envConfig.congressApiKey,
-    logger,
+    congress: targetCongress,
+    billTypes: event.billTypes,
+    limit: event.limit,
   });
 
   const limit = event.limit ?? 100;
@@ -48,8 +58,8 @@ export async function handler(
   const results: PersistedBillResult[] = [];
 
   while (true) {
-    const page = await client.fetchBillPage({
-      congress: event.congress ?? envConfig.defaultCongress,
+    const page = await congressClient.fetchBillPage({
+      congress: targetCongress,
       billTypes: event.billTypes,
       limit,
       offset,
@@ -58,7 +68,11 @@ export async function handler(
     });
 
     const bills = page.bills ?? [];
-    logger.info("Fetched bill page", { count: bills.length, offset });
+    logger.info("Fetched bill page", {
+      runId,
+      count: bills.length,
+      offset,
+    });
 
     if (bills.length === 0) {
       break;
@@ -67,16 +81,21 @@ export async function handler(
     for (const bill of bills) {
       const identifier = buildBillIdentifier(bill);
       try {
-        const hydrated = await hydrateBill({ client, bill, logger });
+        const hydrated = await hydrateBill({
+          client: congressClient,
+          bill,
+          logger,
+        });
         const result = await persistHydratedBill({
           data: hydrated,
-          client,
+          client: congressClient,
+          supabase,
           logger,
         });
         results.push(result);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        logger.error("Failed to ingest bill", { identifier, message });
+        logger.error("Failed to ingest bill", { identifier, message, runId });
         results.push({
           action: "failed",
           identifier,
@@ -107,7 +126,7 @@ export async function handler(
     })),
   };
 
-  logger.info("Legislation ingestion finished", { summary });
+  logger.info("Legislation ingestion finished", { runId, summary });
 
   return summary;
-}
+};

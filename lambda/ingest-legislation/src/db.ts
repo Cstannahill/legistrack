@@ -1,20 +1,44 @@
-import { PrismaClient } from "@prisma/client";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-type GlobalWithPrisma = typeof globalThis & {
-  __prisma?: PrismaClient;
+type GlobalWithSupabase = typeof globalThis & {
+  __supabase?: SupabaseClient;
 };
 
-const globalForPrisma = globalThis as GlobalWithPrisma;
+const globalForSupabase = globalThis as GlobalWithSupabase;
 
-export const db =
-  globalForPrisma.__prisma ??
-  new PrismaClient({
-    log:
-      process.env.NODE_ENV === "development"
-        ? ["query", "error", "warn"]
-        : ["error"],
-  });
+interface SupabaseConfig {
+  supabaseUrl?: string;
+  supabaseServiceRoleKey?: string;
+}
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.__prisma = db;
+export function getSupabaseClient(config?: SupabaseConfig): SupabaseClient {
+  if (!globalForSupabase.__supabase) {
+    const supabaseUrl = config?.supabaseUrl ?? process.env.SUPABASE_URL;
+    const supabaseServiceRoleKey =
+      config?.supabaseServiceRoleKey ??
+      process.env.SUPABASE_SERVICE_ROLE_KEY ??
+      process.env.SUPABASE_SERVICE_KEY;
+
+    if (!supabaseUrl) {
+      throw new Error("SUPABASE_URL must be configured");
+    }
+
+    if (!supabaseServiceRoleKey) {
+      throw new Error(
+        "SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_KEY) must be configured"
+      );
+    }
+
+    globalForSupabase.__supabase = createClient(
+      supabaseUrl,
+      supabaseServiceRoleKey,
+      {
+        auth: {
+          persistSession: false,
+        },
+      }
+    );
+  }
+
+  return globalForSupabase.__supabase;
 }

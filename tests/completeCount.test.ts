@@ -1,5 +1,5 @@
-import { db } from "@/lib/db";
-import { get_count_complete_legislation } from "@/lib/stats";
+import { db } from "../src/lib/db";
+import { get_count_complete_legislation } from "../src/lib/stats";
 
 // Helper to call the unified SQL function with minimal filters and get total_count
 async function fetchSqlCount(): Promise<number> {

@@ -36,6 +36,15 @@ DECLARE
   sort_direction TEXT;
   bill_sort_col TEXT;
   eo_sort_col TEXT;
+  cleaned_bill_search TEXT;
+  bill_identifier_match TEXT[];
+  bill_identifier_search BOOLEAN := FALSE;
+  bill_identifier_type TEXT := NULL;
+  bill_identifier_exact INT := NULL;
+  bill_identifier_digits INT := 0;
+  bill_identifier_multiplier INT := 1;
+  bill_identifier_range_start INT := NULL;
+  bill_identifier_range_end INT := NULL;
 BEGIN
   IF lower(p_sort_dir) = 'asc' THEN
     sort_direction := 'ASC';
@@ -60,6 +69,23 @@ BEGIN
     eo_sort_col := 'publicationDate';
   ELSE
     eo_sort_col := 'signingDate';
+  END IF;
+
+  IF p_bill_search IS NOT NULL THEN
+    cleaned_bill_search := btrim(regexp_replace(p_bill_search, '\.', '', 'g'));
+    bill_identifier_match := regexp_match(cleaned_bill_search, '^([A-Za-z]+)?\s*(\d+)$');
+
+    IF bill_identifier_match IS NOT NULL THEN
+      bill_identifier_search := TRUE;
+      IF bill_identifier_match[1] IS NOT NULL AND bill_identifier_match[1] <> '' THEN
+        bill_identifier_type := upper(bill_identifier_match[1]);
+      END IF;
+      bill_identifier_exact := bill_identifier_match[2]::INT;
+      bill_identifier_digits := length(bill_identifier_match[2]);
+      bill_identifier_multiplier := CAST(power(10, GREATEST(0, 4 - bill_identifier_digits)) AS INT);
+      bill_identifier_range_start := bill_identifier_exact * bill_identifier_multiplier;
+      bill_identifier_range_end := bill_identifier_range_start + bill_identifier_multiplier;
+    END IF;
   END IF;
 
   RETURN QUERY
@@ -103,8 +129,28 @@ BEGIN
               SELECT 1 FROM public."_BillCategories" bc2 JOIN public."Category" c2 ON c2.id = bc2."B"
               WHERE bc2."A" = b.id AND c2.slug = $2))
         AND ($3::INT IS NULL OR b."congress" = $3)
-        AND ($4::TEXT IS NULL OR (
-              b.title ILIKE '%%' || $4 || '%%' OR b."officialTitle" ILIKE '%%' || $4 || '%%' OR b."shortTitle" ILIKE '%%' || $4 || '%%'))
+        AND (
+          $4::TEXT IS NULL
+          OR (
+            CASE
+              WHEN $12::BOOLEAN THEN
+                (
+                  ($13::TEXT IS NULL OR b."billType" ILIKE $13)
+                  AND (
+                    ($14::INT IS NOT NULL AND b."billNumber" = $14)
+                    OR
+                    ($15::INT IS NOT NULL AND $16::INT IS NOT NULL AND b."billNumber" >= $15 AND b."billNumber" < $16)
+                  )
+                )
+              ELSE
+                (
+                  b.title ILIKE '%%' || $4 || '%%'
+                  OR b."officialTitle" ILIKE '%%' || $4 || '%%'
+                  OR b."shortTitle" ILIKE '%%' || $4 || '%%'
+                )
+            END
+          )
+        )
     ),
     eo_rows AS (
       SELECT
@@ -165,6 +211,7 @@ BEGIN
   $fmt$, bill_sort_col, eo_sort_col, sort_direction)
   USING p_bill_status, p_bill_category_slug, p_bill_congress, p_bill_search,
         p_eo_category_slug, p_eo_president_name, p_eo_search, p_eo_signing_start, p_eo_signing_end,
-        offset_val, limit_val;
+        offset_val, limit_val,
+        bill_identifier_search, bill_identifier_type, bill_identifier_exact, bill_identifier_range_start, bill_identifier_range_end;
 END;
 $$;
