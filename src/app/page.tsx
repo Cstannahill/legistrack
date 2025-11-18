@@ -55,7 +55,7 @@ export default async function HomePage() {
         </div>
       </section>
       {/* Features Section */}
-      <section className="w-full bg-stone-500 py-12 md:py-24 dark:bg-gray-900">
+      <section className="w-full bg-stone-700 rounded-sm py-12 md:py-24 dark:bg-gray-900">
         <div className="container px-4 md:px-6">
           <h2 className="mb-12 text-center text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl">
             How It Works
