@@ -51,7 +51,7 @@ export function LegislativeFullText({ text, billIdentifier }: LegislativeFullTex
             <Card className="lg:w-auto w-full overflow-hidden">
                 <div className="p-6 lg:p-10 lg:mx-auto">
                     <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <pre className="whitespace-pre-wrap break-words font-mono text-xs sm:text-sm leading-relaxed">
+                        <pre className="whitespace-pre-wrap wrap-break-word font-mono text-xs sm:text-sm leading-relaxed">
                             {parsed.content || cleaned}
                         </pre>
                     </div>

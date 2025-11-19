@@ -18,8 +18,6 @@ interface PageProps {
         id: string
     }>
 }
-
-// Helper component to render bill content
 interface SummaryItem { summaryType: string; content: string | null; keyPoints?: string[] | null; impactAreas?: string[] | null; aiModel?: string | null; generatedAt?: string | null }
 interface ActionItem { id: string; actionDate: string; text: string; actionCode?: string | null }
 interface CosponsorItem { fullName: string; party: string; state: string }
@@ -370,7 +368,6 @@ export default async function BillDetailPage({ params }: PageProps) {
         notFound()
     }
 
-    // Normalize companionBills to match previous shape (array of { companionBill: {...} })
     const normalizedBill: BillJSON & { companionBills: CompanionBillJSON[]; companionOf: CompanionBillJSON[] } = {
         ...billJson!,
         companionBills: Array.isArray(billJson?.companionBills)
@@ -381,12 +378,9 @@ export default async function BillDetailPage({ params }: PageProps) {
 
     const bill = normalizedBill
 
-    // bill presence already validated
-
-    // Collect all companion bills
     const companions: CompanionBillJSON[] = bill.companionBills || []
 
-    // Check if there are companions
+
     const hasCompanions = companions.length > 0
 
     const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
@@ -420,7 +414,7 @@ export default async function BillDetailPage({ params }: PageProps) {
                             </span>
                             <StatusBadge status={bill.currentStatus} />
                         </div>
-                        <h1 className="mb-2 text-3xl font-bold tracking-tight md:text-4xl">
+                        <h1 className="mb-2 text-lg font-bold tracking-tight md:text-lg">
                             {bill.title}
                         </h1>
                         {bill.shortTitle && bill.shortTitle !== bill.title && (
