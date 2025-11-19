@@ -28,12 +28,17 @@ function createMetrics(): BatchProcessMetrics {
 
 export async function processBillSummaries(
   client: Supabase,
-  config: EnvironmentConfig
+  config: EnvironmentConfig,
+  batchSizeOverride?: number
 ): Promise<BatchProcessMetrics> {
   const metrics = createMetrics();
-  metrics.requested = config.billBatchSize;
+  const batchSize =
+    typeof batchSizeOverride === "number" && batchSizeOverride >= 0
+      ? batchSizeOverride
+      : config.billBatchSize;
+  metrics.requested = batchSize;
 
-  const bills = await fetchBillsNeedingSummaries(client, config.billBatchSize);
+  const bills = await fetchBillsNeedingSummaries(client, batchSize);
   metrics.prepared = bills.length;
 
   if (bills.length === 0) {

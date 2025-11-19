@@ -288,25 +288,22 @@ export default async function BillsPage({ searchParams }: PageProps) {
     let rawBills: RawBill[] = []
     let rawEOs: RawEO[] = []
 
-    // Always use unified function for ALL view (parameterized) regardless of filters; incomplete toggle still forces bill filter logic client-side
-    // BUT: don't use unified if status is selected (EOs don't have status, so only bills should show)
+
     const useUnified = legislationType === 'ALL' && !params.status && !params.congress
 
     if (useUnified) {
-        // Map filters to function parameters; showIncomplete bypass handled by setting bill completeness predicate above (function expects only complete rows)
         interface UnifiedRow { id: string; kind: 'bill' | 'executiveOrder'; billType: string | null; billNumber: string | null; congress: number | null; title: string; currentStatus: string | null; sort_date: string; categories: { id: string; name: string; slug: string }[] | null; sponsor: { fullName: string; party: string; state: string } | null; presidentName?: string | null; total_count: bigint | number }
         const billStatus = params.status || null
         const billCategory = params.category || null
         const billCongress = params.congress ? parseInt(params.congress, 10) : CURRENT_CONGRESS
         const billSearch = hasSearchQuery ? searchQuery : null
         const eoCategory = params.category || null
-        const eoPresident = null // future UI field
+        const eoPresident = null
         const eoSearch = hasSearchQuery ? searchQuery : null
         const eoSigningStart = null
         const eoSigningEnd = null
         const sortField = 'introducedDate'
         const sortDir = 'desc'
-        // If showIncomplete is true we should NOT include incomplete bills. We currently rely on billWhere building earlier; unified function filters only complete items. So for incomplete view we fall back to per-type logic.
         if (!showIncomplete) {
             const unified = await db.$queryRaw<UnifiedRow[]>`
                 SELECT * FROM get_bills_and_orders(
@@ -358,7 +355,6 @@ export default async function BillsPage({ searchParams }: PageProps) {
             })
             const total = totalCount
             const totalPages = Math.ceil(total / limit)
-            // Render early return to avoid recalculating totals below
             return (
                 <div className="container py-8">
                     <div className="mb-8">
@@ -403,7 +399,6 @@ export default async function BillsPage({ searchParams }: PageProps) {
         const simpleBills = !params.status && !params.search && !params.category && !showIncomplete
         if (simpleBills) {
             interface BillRow { id: string; billType: string | null; billNumber: string | null; congress: number | null; title: string; currentStatus: string | null; sort_date: string; categories: { id: string; name: string; slug: string }[] | null; sponsor: { fullName: string; party: string; state: string } | null; total_count: bigint | number }
-            // Call with all parameters explicitly to avoid function signature ambiguity
             const billRows = await db.$queryRaw<BillRow[]>`
                 SELECT * FROM get_bills(
                     ${skip}::int,
@@ -432,9 +427,7 @@ export default async function BillsPage({ searchParams }: PageProps) {
                 categories: Array.isArray(r.categories) ? r.categories.map(c => ({ ...c, color: null })) : [],
                 summaries: [],
             }))
-            // override billCount for pagination accuracy
             if (billRows[0]?.total_count) {
-                // billCount is const earlier; we can't reassign; so rely on total below via recalculation path
             }
         } else {
             rawBills = await db.bill.findMany({
@@ -446,9 +439,8 @@ export default async function BillsPage({ searchParams }: PageProps) {
             }).then((rows: RawBill[]) => rows.map(b => ({ ...b, summaries: b.summaries?.map((s) => ({ content: s.content })) ?? [] })))
         }
     } else if (legislationType === 'EXECUTIVE_ORDERS' && shouldFetchEOs) {
-        // Always use parameterized function; map frontend filters to function args.
         interface EORow { id: string; billNumber: string | null; title: string; sort_date: string; presidentName: string | null; categories: { id: string; name: string; slug: string }[] | null; total_count: bigint | number }
-        const presidentFilter: string | null = null // Placeholder: add UI filter support later
+        const presidentFilter: string | null = null
         const signingStart: string | null = null
         const signingEnd: string | null = null
         const searchTerm = hasSearchQuery ? searchQuery : null
@@ -478,7 +470,6 @@ export default async function BillsPage({ searchParams }: PageProps) {
         }))
     }
 
-    // Local mirror of BillList accepted item shapes
     type BillListBill = {
         type: 'bill'
         id: string
@@ -512,21 +503,15 @@ export default async function BillsPage({ searchParams }: PageProps) {
     } else if (legislationType === 'EXECUTIVE_ORDERS') {
         items = rawEOs.map((e) => ({ type: 'executiveOrder' as const, ...e }))
     } else if (legislationType === 'ALL' && shouldFetchEOs) {
-        // This case is when ALL is selected with no status filter - handled by unified query above
-        // If we reach here, something went wrong
         items = []
     }
 
-    // Calculate total count based on what was fetched
     let total = 0
     if (legislationType === 'BILLS' || (legislationType === 'ALL' && !shouldFetchEOs)) {
-        // When showing only bills (either explicitly or because status filter excludes EOs)
         total = billCount
     } else if (legislationType === 'EXECUTIVE_ORDERS') {
-        // When showing only executive orders
         total = eoCount
     } else if (legislationType === 'ALL' && shouldFetchEOs) {
-        // When showing both (unified query was used)
         total = billCount + eoCount
     }
 

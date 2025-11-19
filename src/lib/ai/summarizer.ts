@@ -51,7 +51,7 @@ export async function generateSummary(
   const formatPart = basePrompt.split("{{FULL_TEXT}}")[1] || "";
 
   const message = await anthropic.messages.create({
-    model: "claude-sonnet-4-5-20250929",
+    model: "claude-haiku-4-5-20251001",
     max_tokens: 2000,
     temperature: 0.3, // Lower temperature for consistency
     system: [

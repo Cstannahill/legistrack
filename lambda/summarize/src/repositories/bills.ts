@@ -4,6 +4,8 @@ import type { Supabase } from "../types.js";
 import type { BillRecord, SummarizationResult } from "../types.js";
 
 const BILL_FIELDS = `id, billType, billNumber, congress, title, shortTitle, currentStatus, statusDate, introducedDate, fullText, fullTextUrl`;
+const MIN_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 500;
 
 export async function fetchBillsNeedingSummaries(
   client: Supabase,
@@ -13,24 +15,57 @@ export async function fetchBillsNeedingSummaries(
     return [];
   }
 
-  const candidateCount = Math.max(limit * 3, limit);
-  const { data, error } = await client
-    .from("Bill")
-    .select(BILL_FIELDS)
-    .not("fullText", "is", null)
-    .order("introducedDate", { ascending: false })
-    .limit(candidateCount);
+  const pageSize = Math.min(Math.max(limit * 3, MIN_PAGE_SIZE), MAX_PAGE_SIZE);
+  const unsummarized: BillRecord[] = [];
+  const seen = new Set<string>();
 
-  if (error) {
-    throw new Error(`Failed to load bills: ${error.message}`);
+  for (let page = 0; unsummarized.length < limit; page += 1) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error } = await client
+      .from("Bill")
+      .select(BILL_FIELDS)
+      .not("fullText", "is", null)
+      .not("fullText", "eq", "")
+      .order("introducedDate", { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`Failed to load bills: ${error.message}`);
+    }
+
+    const rows = (data ?? []) as BillRecord[];
+    if (!rows.length) {
+      break;
+    }
+
+    const candidates = rows.filter(
+      (bill) => typeof bill.fullText === "string" && bill.fullText.trim().length > 0
+    );
+    if (!candidates.length) {
+      continue;
+    }
+
+    const remaining = limit - unsummarized.length;
+    const filtered = await filterBillsWithoutStandardSummary(client, candidates, remaining);
+    if (!filtered.length) {
+      continue;
+    }
+
+    for (const bill of filtered) {
+      if (seen.has(bill.id)) {
+        continue;
+      }
+      seen.add(bill.id);
+      unsummarized.push(bill);
+      if (unsummarized.length >= limit) {
+        break;
+      }
+    }
   }
 
-  const rows = (data ?? []) as BillRecord[];
-  const candidates = rows.filter((bill) =>
-    typeof bill.fullText === "string" && bill.fullText.trim().length > 0
-  );
-
-  return filterBillsWithoutStandardSummary(client, candidates, limit);
+  return unsummarized.slice(0, limit);
 }
 
 async function filterBillsWithoutStandardSummary(

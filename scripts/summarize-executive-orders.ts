@@ -57,7 +57,7 @@ async function main() {
     AI_MODEL === "openai"
       ? "GPT-5-nano"
       : AI_MODEL === "anthropic"
-      ? "Claude Sonnet 4.5"
+      ? "Claude Haiku 4.5"
       : `${openRouterModelInfo.name} (${openRouterModel}) via OpenRouter`;
 
   console.log(`\n🤖 Executive Order Batch Summarization`);

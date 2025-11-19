@@ -67,7 +67,7 @@ export default async function ExecutiveOrderPage({ params }: PageProps) {
                                 {typeLabel}
                             </Badge>
                         </div>
-                        <h1 className="text-3xl font-bold tracking-tight">
+                        <h1 className="text-lg font-bold tracking-tight">
                             {executiveOrder.title}
                         </h1>
                     </div>

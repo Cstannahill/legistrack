@@ -4,6 +4,8 @@ import type { Supabase } from "../types.js";
 import type { ExecutiveOrderRecord, SummarizationResult } from "../types.js";
 
 const EO_FIELDS = `id, orderNumber, executiveOrderType, title, presidentName, signingDate, publicationDate, fullText, fullTextUrl`;
+const MIN_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 500;
 
 export async function fetchExecutiveOrdersNeedingSummaries(
   client: Supabase,
@@ -13,24 +15,57 @@ export async function fetchExecutiveOrdersNeedingSummaries(
     return [];
   }
 
-  const candidateCount = Math.max(limit * 3, limit);
-  const { data, error } = await client
-    .from("ExecutiveOrder")
-    .select(EO_FIELDS)
-    .not("fullText", "is", null)
-    .order("signingDate", { ascending: false })
-    .limit(candidateCount);
+  const pageSize = Math.min(Math.max(limit * 3, MIN_PAGE_SIZE), MAX_PAGE_SIZE);
+  const unsummarized: ExecutiveOrderRecord[] = [];
+  const seen = new Set<string>();
 
-  if (error) {
-    throw new Error(`Failed to load executive orders: ${error.message}`);
+  for (let page = 0; unsummarized.length < limit; page += 1) {
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error } = await client
+      .from("ExecutiveOrder")
+      .select(EO_FIELDS)
+      .not("fullText", "is", null)
+      .not("fullText", "eq", "")
+      .order("signingDate", { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`Failed to load executive orders: ${error.message}`);
+    }
+
+    const rows = (data ?? []) as ExecutiveOrderRecord[];
+    if (!rows.length) {
+      break;
+    }
+
+    const candidates = rows.filter(
+      (eo) => typeof eo.fullText === "string" && eo.fullText.trim().length > 0
+    );
+    if (!candidates.length) {
+      continue;
+    }
+
+    const remaining = limit - unsummarized.length;
+    const filtered = await filterExecutiveOrdersWithoutSummary(client, candidates, remaining);
+    if (!filtered.length) {
+      continue;
+    }
+
+    for (const eo of filtered) {
+      if (seen.has(eo.id)) {
+        continue;
+      }
+      seen.add(eo.id);
+      unsummarized.push(eo);
+      if (unsummarized.length >= limit) {
+        break;
+      }
+    }
   }
 
-  const rows = (data ?? []) as ExecutiveOrderRecord[];
-  const candidates = rows.filter((eo) =>
-    typeof eo.fullText === "string" && eo.fullText.trim().length > 0
-  );
-
-  return filterExecutiveOrdersWithoutSummary(client, candidates, limit);
+  return unsummarized.slice(0, limit);
 }
 
 async function filterExecutiveOrdersWithoutSummary(
