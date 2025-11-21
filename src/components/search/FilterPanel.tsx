@@ -3,7 +3,6 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import {
     Select,
     SelectContent,
@@ -30,7 +29,6 @@ export function FilterPanel({ categories }: FilterPanelProps) {
     const currentType = searchParams.get('type') || 'ALL'
     const currentStatus = searchParams.get('status')
     const currentCategory = searchParams.get('category')
-    const currentCongress = searchParams.get('congress') || String(CURRENT_CONGRESS)
     const showIncomplete = searchParams.get('showIncomplete') === 'true'
 
     const updateFilter = (key: string, value: string | null) => {
@@ -100,7 +98,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
             </div>
 
             {/* Congress Filter - Only for bills */}
-            {currentType !== 'EXECUTIVE_ORDERS' && (
+            {/* {currentType !== 'EXECUTIVE_ORDERS' && (
                 <div>
                     <label className="mb-2 block text-sm font-medium">Congress</label>
                     <Select value={currentCongress} onValueChange={(value) => updateFilter('congress', value)}>
@@ -118,7 +116,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                         </SelectContent>
                     </Select>
                 </div>
-            )}
+            )} */}
 
             {/* Status Filter - Only for bills */}
             {currentType !== 'EXECUTIVE_ORDERS' && (
@@ -150,7 +148,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                                 updateFilter('category', currentCategory === category.slug ? null : category.slug)
                             }
                             aria-pressed={currentCategory === category.slug}
-                            className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors duration-150 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:bg-accent/80 active:scale-[0.996] ${currentCategory === category.slug ? 'bg-accent font-medium shadow-sm' : 'bg-transparent'}`}
+                            className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors duration-150 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:bg-accent/80 active:scale-[0.996] ${currentCategory === category.slug ? 'bg-accent font-medium shadow-sm text-background' : 'bg-transparent'}`}
                         >
                             {category.color && (
                                 <div
