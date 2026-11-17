@@ -1,11 +1,11 @@
 // lib/openrouter-keys.ts
 const MAX_INDEXED_KEYS = 10;
 
-function visibleKeyNames(envObj: NodeJS.ProcessEnv) {
-  return Object.keys(envObj).filter((k) => k.includes("OPENROUTER_API_KEY"));
+function visibleKeyNames(envObj: Partial<NodeJS.ProcessEnv>): string[] {
+  return Object.keys(envObj).filter((k) => /OPENROUTER_(?:API_)?KEY/.test(k));
 }
 
-function parseCommaSeparatedKeys(val?: string | null) {
+function parseCommaSeparatedKeys(val?: string | null): string[] {
   if (!val) return [];
   return val
     .split(",")
@@ -13,36 +13,41 @@ function parseCommaSeparatedKeys(val?: string | null) {
     .filter(Boolean);
 }
 
-export function getOpenRouterKeys(): string[] {
-  // 1) Prefer single comma-separated env var (easier to manage in Vercel UI)
-  const csv = process.env.OPENROUTER_API_KEYS;
-  const csvKeys = parseCommaSeparatedKeys(csv);
-  if (csvKeys.length > 0) {
-    console.log(
-      `[OPENROUTER] Using ${csvKeys.length} key(s) from OPENROUTER_API_KEYS`
-    );
-    return csvKeys;
+/**
+ * Loads and deduplicates OpenRouter API keys across supported env formats:
+ * `OPENROUTER_API_KEYS` (CSV), `OPENROUTER_API_KEY_1..10`, and `OPENROUTER_KEY_1..10`.
+ * Preserves first-seen order and returns `[]` (with a warning) instead of throwing when empty.
+ */
+export function getOpenRouterKeys(
+  envObj: Partial<NodeJS.ProcessEnv> = process.env
+): string[] {
+  const seen = new Set<string>();
+
+  for (const key of parseCommaSeparatedKeys(envObj.OPENROUTER_API_KEYS)) {
+    seen.add(key);
   }
 
-  // 2) Fallback to numbered keys OPENROUTER_API_KEY_1..N
-  const numbered: string[] = [];
   for (let i = 1; i <= MAX_INDEXED_KEYS; i++) {
-    const v = process.env[`OPENROUTER_API_KEY_${i}`];
-    if (v) numbered.push(v.trim());
-  }
-  if (numbered.length > 0) {
-    console.log(
-      `[OPENROUTER] Using ${numbered.length} key(s) from OPENROUTER_API_KEY_<N>`
-    );
-    return numbered;
+    const apiKey = envObj[`OPENROUTER_API_KEY_${i}`]?.trim();
+    if (apiKey) {
+      seen.add(apiKey);
+    }
   }
 
-  // 3) Nothing found — log visible names (no secret values)
-  console.warn(
-    "[OPENROUTER] No keys found. Visible env keys that mention OPENROUTER_API_KEY:",
-    visibleKeyNames(process.env)
-  );
-  throw new Error(
-    "No OpenRouter API keys found in runtime env. Ensure OPENROUTER_API_KEYS or OPENROUTER_API_KEY_1..N are configured and exposed to the function runtime."
-  );
+  for (let i = 1; i <= MAX_INDEXED_KEYS; i++) {
+    const shortKey = envObj[`OPENROUTER_KEY_${i}`]?.trim();
+    if (shortKey) {
+      seen.add(shortKey);
+    }
+  }
+
+  const keys = Array.from(seen);
+  if (keys.length === 0) {
+    console.warn(
+      "[OPENROUTER] No keys found. Visible env keys mentioning OPENROUTER:",
+      visibleKeyNames(envObj)
+    );
+  }
+
+  return keys;
 }
