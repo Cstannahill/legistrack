@@ -341,15 +341,7 @@ function buildDownloadUrl(source: string, apiKey: string): string {
 }
 
 function redactUrlApiKey(rawUrl: string): string {
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.searchParams.has("api_key")) {
-      parsed.searchParams.set("api_key", "REDACTED");
-    }
-    return parsed.toString();
-  } catch {
-    return rawUrl.replace(/([?&]api_key=)[^&]+/gi, "$1REDACTED");
-  }
+  return rawUrl.replace(/([?&]api_key=)[^&#]*/gi, "$1***");
 }
 
 function extractBillTextContent(raw: string): string {

@@ -2,6 +2,7 @@ import {
   CongressClient,
   hydrateBill,
   type CongressBillListItem,
+  type CongressClientLogger,
 } from "@/lib/ingestion/congress-client";
 import {
   ensureOrderNumber,
@@ -12,6 +13,7 @@ import {
   mapSubtypeToExecutiveOrderType,
   resetFederalRegisterThrottleForTests,
   type FederalRegisterDocument,
+  type FederalRegisterLogger,
 } from "@/lib/ingestion/federal-register-client";
 
 interface MockResponseInit {
@@ -21,6 +23,22 @@ interface MockResponseInit {
   jsonBody?: unknown;
   textBody?: string;
   headers?: Record<string, string>;
+}
+
+interface SpyLogger extends CongressClientLogger, FederalRegisterLogger {
+  debug: jest.Mock;
+  info: jest.Mock;
+  warn: jest.Mock;
+  error: jest.Mock;
+}
+
+function createSpyLogger(): SpyLogger {
+  return {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  };
 }
 
 function makeMockResponse(init: MockResponseInit): Response {
@@ -48,12 +66,14 @@ function makeMockResponse(init: MockResponseInit): Response {
 describe("Congress.gov & Federal Register ingestion clients", () => {
   const originalFetch = global.fetch;
   let mockFetch: jest.Mock;
+  let logger: SpyLogger;
 
   beforeEach(() => {
     jest.clearAllMocks();
     resetFederalRegisterThrottleForTests();
     mockFetch = jest.fn();
     global.fetch = mockFetch as unknown as typeof fetch;
+    logger = createSpyLogger();
   });
 
   afterEach(() => {
@@ -62,7 +82,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
   });
 
   describe("CongressClient", () => {
-    it("fetchBillPage passes cache: no-store, signal, date range, and api_key, and retries on 429 and 503", async () => {
+    it("fetchBillPage passes cache: no-store, signal, date range, and api_key, and retries on 429 and 503 while redacting api_key in logs", async () => {
       mockFetch
         .mockResolvedValueOnce(
           makeMockResponse({ status: 429, statusText: "Too Many Requests", textBody: "rate limited" })
@@ -92,6 +112,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         requestIntervalMs: 0,
         retryDelayMs: 0,
         maxRetries: 2,
+        logger,
       });
 
       const page = await client.fetchBillPage({
@@ -106,6 +127,14 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
       expect(page.bills).toHaveLength(1);
       expect(page.bills[0].number).toBe("101");
       expect(mockFetch).toHaveBeenCalledTimes(3);
+
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+      for (const [, metadata] of logger.warn.mock.calls as Array<
+        [string, { url?: string; status?: number }]
+      >) {
+        expect(metadata.url).toContain("api_key=***");
+        expect(metadata.url).not.toContain("test-congress-key");
+      }
 
       for (const [rawUrl, init] of mockFetch.mock.calls as Array<[string, RequestInit]>) {
         const parsed = new URL(rawUrl);
@@ -134,6 +163,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         requestIntervalMs: 0,
         retryDelayMs: 0,
         maxRetries: 2,
+        logger,
       });
 
       mockFetch.mockResolvedValueOnce(
@@ -142,6 +172,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
 
       await expect(client.fetchBillDetail(119, "hr", "99999")).rejects.toThrow(/404/);
       expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(logger.warn).not.toHaveBeenCalled();
 
       mockFetch.mockClear();
       mockFetch.mockResolvedValue(
@@ -150,6 +181,13 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
 
       await expect(client.fetchBillDetail(119, "hr", "100")).rejects.toThrow(/502/);
       expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+      for (const [, metadata] of logger.warn.mock.calls as Array<
+        [string, { url?: string }]
+      >) {
+        expect(metadata.url).toContain("api_key=***");
+        expect(metadata.url).not.toContain("test-congress-key");
+      }
     });
 
     it("fetchBillText prioritizes FORMATTED TEXT > TEXT > TXT > XML > PDF and extracts <pre> inner text without leaking api_key in returned url", async () => {
@@ -193,6 +231,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         apiKey: "secret-congress-key",
         requestIntervalMs: 0,
         retryDelayMs: 0,
+        logger,
       });
 
       const result = await client.fetchBillText(119, "HR", 1);
@@ -219,6 +258,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         apiKey: "test-key",
         requestIntervalMs: 0,
         retryDelayMs: 0,
+        logger,
       });
 
       // Fallback to TEXT over TXT & XML, returning plain text
@@ -282,6 +322,13 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         url: "https://www.congress.gov/119/bills/s6/s6.txt",
         date: "2026-03-02T00:00:00Z",
       });
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Bill text download returned non-200",
+        expect.objectContaining({
+          status: 404,
+          url: "https://www.congress.gov/119/bills/s6/s6.txt",
+        })
+      );
 
       // Metadata 404 returns undefined
       mockFetch.mockClear();
@@ -295,6 +342,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         requestIntervalMs: 0,
         retryDelayMs: 0,
         maxRetries: 0,
+        logger,
       });
 
       const listItem: CongressBillListItem = {
@@ -358,9 +406,13 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         { bioguideId: "B000002", fullName: "Rep. Bob" },
       ]);
       expect(hydrated.text).toBeUndefined();
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Failed to fetch bill text, will retry later",
+        expect.objectContaining({ identifier: "119-HR-42" })
+      );
 
       // Standalone hydrateBill helper delegates equivalently
-      const hydratedViaFn = await hydrateBill({ client, bill: listItem });
+      const hydratedViaFn = await hydrateBill({ client, bill: listItem, logger });
       expect(hydratedViaFn.bill.title).toBe("Infrastructure Bill");
     });
 
@@ -372,7 +424,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         makeMockResponse({ status: 200, jsonBody: { member: { bioguideId: "M001" } } })
       );
 
-      const client = new CongressClient({ apiKey: "test-key" });
+      const client = new CongressClient({ apiKey: "test-key", logger });
 
       const firstPromise = client.fetchMember("M001");
       await Promise.resolve();
@@ -397,6 +449,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         retryDelayMs: 0,
         maxRetries: 0,
         timeoutMs: 20,
+        logger,
       });
 
       mockFetch.mockImplementationOnce(
@@ -413,13 +466,14 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
       );
     });
 
-    it("retries on transient network errors, requires CONGRESS_API_KEY, and returns null from fetchMember on failure", async () => {
+    it("retries on transient network errors with redacted logs, requires CONGRESS_API_KEY, and returns null from fetchMember on failure", async () => {
       const originalCongressKey = process.env.CONGRESS_API_KEY;
       delete process.env.CONGRESS_API_KEY;
 
       const missingKeyClient = new CongressClient({
         requestIntervalMs: 0,
         retryDelayMs: 0,
+        logger,
       });
       await expect(
         missingKeyClient.fetchBillDetail(119, "hr", 1)
@@ -444,14 +498,28 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         requestIntervalMs: 0,
         retryDelayMs: 0,
         maxRetries: 1,
+        logger,
       });
 
       const detail = await client.fetchBillDetail(119, "hr", 9);
       expect(detail.bill.number).toBe("9");
       expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Retrying Congress request after network error",
+        expect.objectContaining({
+          url: "https://api.congress.gov/v3/bill/119/hr/9?api_key=***&format=json",
+        })
+      );
+      expect(
+        (logger.warn.mock.calls[0][1] as { url: string }).url
+      ).not.toContain("test-key");
 
       const member = await client.fetchMember("MISSING1");
       expect(member).toBeNull();
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Failed to fetch member",
+        expect.objectContaining({ bioguideId: "MISSING1" })
+      );
     });
   });
 
@@ -490,11 +558,12 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
             signingDate: { gte: "2026-01-01", lte: "2026-01-14" },
           },
         },
-        { requestIntervalMs: 0, retryDelayMs: 0 }
+        { requestIntervalMs: 0, retryDelayMs: 0, logger }
       );
 
       expect(res.results).toHaveLength(1);
       expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
 
       const [calledUrl, init] = mockFetch.mock.calls[1] as [string, RequestInit];
       const parsed = new URL(calledUrl);
@@ -517,7 +586,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
       expect(init.signal).toBeInstanceOf(AbortSignal);
     });
 
-    it("hydrateExecutiveOrder fetches detail + text candidates in priority order (body_html_url -> raw_text_url -> full_text_xml_url) with no-store and handles 404 without aborting EO", async () => {
+    it("hydrateExecutiveOrder fetches detail + text candidates in priority order (body_html_url -> raw_text_url -> full_text_xml_url) with no-store and logs warnings on 404/network failure without aborting EO", async () => {
       const baseDoc: FederalRegisterDocument = {
         document_number: "2026-01234",
         type: "Presidential Document",
@@ -549,6 +618,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         fetchFullText: true,
         requestIntervalMs: 0,
         retryDelayMs: 0,
+        logger,
       });
 
       expect(hydrated.documentNumber).toBe("2026-01234");
@@ -559,6 +629,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
       expect(hydrated.fullTextUrl).toBe(
         "https://www.federalregister.gov/api/v1/full.xml"
       );
+      expect(logger.warn).toHaveBeenCalledTimes(2);
 
       expect(mockFetch.mock.calls.map(([url]) => url)).toEqual([
         "https://www.federalregister.gov/api/v1/documents/2026-01234.json",
@@ -571,12 +642,13 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         expect(init.signal).toBeInstanceOf(AbortSignal);
       }
 
-      // Case 2: All text candidates return 404 -> EO succeeds with fullText: null
+      // Case 2: All text candidates fail (404 / network error) -> logs warnings via injected logger and returns fullText: null without aborting EO
       mockFetch.mockClear();
+      logger.warn.mockClear();
       mockFetch
         .mockResolvedValueOnce(makeMockResponse({ status: 200, jsonBody: detailDoc }))
         .mockResolvedValueOnce(makeMockResponse({ status: 404 }))
-        .mockResolvedValueOnce(makeMockResponse({ status: 404 }))
+        .mockRejectedValueOnce(new Error("ECONNRESET"))
         .mockResolvedValueOnce(makeMockResponse({ status: 404 }));
 
       const hydratedNoText = await hydrateExecutiveOrder({
@@ -584,12 +656,42 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         fetchFullText: true,
         requestIntervalMs: 0,
         retryDelayMs: 0,
+        maxRetries: 0,
+        logger,
       });
 
       expect(hydratedNoText.documentNumber).toBe("2026-01234");
       expect(hydratedNoText.fullText).toBeNull();
       expect(hydratedNoText.fullTextUrl).toBe(
         "https://www.federalregister.gov/api/v1/body.html"
+      );
+      expect(logger.warn).toHaveBeenCalledTimes(3);
+      expect(logger.warn).toHaveBeenNthCalledWith(
+        1,
+        "Executive order text candidate returned non-200",
+        expect.objectContaining({
+          documentNumber: "2026-01234",
+          status: 404,
+          url: "https://www.federalregister.gov/api/v1/body.html",
+        })
+      );
+      expect(logger.warn).toHaveBeenNthCalledWith(
+        2,
+        "Failed to download executive order text candidate",
+        expect.objectContaining({
+          documentNumber: "2026-01234",
+          url: "https://www.federalregister.gov/api/v1/raw.txt",
+          error: "ECONNRESET",
+        })
+      );
+      expect(logger.warn).toHaveBeenNthCalledWith(
+        3,
+        "Executive order text candidate returned non-200",
+        expect.objectContaining({
+          documentNumber: "2026-01234",
+          status: 404,
+          url: "https://www.federalregister.gov/api/v1/full.xml",
+        })
       );
     });
 
@@ -614,6 +716,7 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
       const res = await fetchExecutiveOrderFullText("2026-99999", {
         requestIntervalMs: 0,
         retryDelayMs: 0,
+        logger,
       });
 
       expect(res).toEqual({
@@ -633,11 +736,13 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         fetchExecutiveOrderFullText("2026-00000", {
           requestIntervalMs: 0,
           retryDelayMs: 0,
+          logger,
         })
       ).resolves.toEqual({ content: null, url: null });
 
-      // Network error on body_html_url falls through to full_text_xml_url
+      // Network error on body_html_url falls through to full_text_xml_url and warns
       mockFetch.mockClear();
+      logger.warn.mockClear();
       mockFetch
         .mockResolvedValueOnce(
           makeMockResponse({
@@ -659,11 +764,20 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
           requestIntervalMs: 0,
           retryDelayMs: 0,
           maxRetries: 0,
+          logger,
         })
       ).resolves.toEqual({
         content: "<EO>Recovered XML</EO>",
         url: "https://example.test/ok-full.xml",
       });
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Failed to download executive order text candidate",
+        expect.objectContaining({
+          documentNumber: "2026-88888",
+          url: "https://example.test/broken-body.html",
+          error: "ECONNRESET",
+        })
+      );
     });
 
     it("maps subtypes cleanly and enforces default 1000ms throttle across Federal Register requests", async () => {
@@ -684,12 +798,12 @@ describe("Congress.gov & Federal Register ingestion clients", () => {
         })
       );
 
-      const firstPromise = fetchExecutiveOrderDetails("2026-1");
+      const firstPromise = fetchExecutiveOrderDetails("2026-1", { logger });
       await Promise.resolve();
       await firstPromise;
       expect(mockFetch).toHaveBeenCalledTimes(1);
 
-      const secondPromise = fetchExecutiveOrderDetails("2026-2");
+      const secondPromise = fetchExecutiveOrderDetails("2026-2", { logger });
       await jest.advanceTimersByTimeAsync(999);
       expect(mockFetch).toHaveBeenCalledTimes(1);
 

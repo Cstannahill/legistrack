@@ -445,8 +445,11 @@ function collectCandidateTextUrls(
 
 async function fetchTextFromCandidates(
   candidateUrls: string[],
-  opts: FederalRegisterClientOptions = {}
+  opts: FederalRegisterClientOptions = {},
+  documentNumber?: string
 ): Promise<ExecutiveOrderTextResult> {
+  const logger = opts.logger ?? defaultLogger;
+
   for (const candidate of candidateUrls) {
     try {
       const textResponse = await fetchWithThrottleAndRetry(
@@ -464,11 +467,25 @@ async function fetchTextFromCandidates(
         if (text.trim().length > 0) {
           return { content: text, url: candidate };
         }
+        logger.warn?.("Executive order text candidate returned empty content", {
+          ...(documentNumber ? { documentNumber } : {}),
+          url: candidate,
+        });
       } else {
+        logger.warn?.("Executive order text candidate returned non-200", {
+          ...(documentNumber ? { documentNumber } : {}),
+          status: textResponse.status,
+          statusText: textResponse.statusText,
+          url: candidate,
+        });
         await discardResponseBody(textResponse);
       }
-    } catch {
-      // Try next text candidate URL
+    } catch (error) {
+      logger.warn?.("Failed to download executive order text candidate", {
+        ...(documentNumber ? { documentNumber } : {}),
+        url: candidate,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -605,7 +622,7 @@ export async function fetchExecutiveOrderFullText(
   const data = (await response.json()) as FederalRegisterDocument;
   const candidateUrls = collectCandidateTextUrls(data);
 
-  return fetchTextFromCandidates(candidateUrls, opts);
+  return fetchTextFromCandidates(candidateUrls, opts, documentNumber);
 }
 
 /**
@@ -622,7 +639,6 @@ export async function hydrateExecutiveOrder(
     timeoutMs: extraOpts?.timeoutMs ?? options.timeoutMs,
     logger: extraOpts?.logger ?? options.logger,
   };
-  const logger = requestOpts.logger ?? defaultLogger;
   const baseDoc = options.document;
   const fetchFullText = options.fetchFullText ?? true;
 
@@ -676,22 +692,16 @@ export async function hydrateExecutiveOrder(
   let fullTextUrl: string | null = candidateUrls[0] ?? null;
 
   if (fetchFullText && candidateUrls.length > 0) {
-    try {
-      const { content, url } = await fetchTextFromCandidates(
-        candidateUrls,
-        requestOpts
-      );
-      if (content) {
-        fullTextContent = content;
-      }
-      if (url) {
-        fullTextUrl = url;
-      }
-    } catch (error) {
-      logger.warn?.("Failed to download executive order full text", {
-        documentNumber: detail.document_number,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    const { content, url } = await fetchTextFromCandidates(
+      candidateUrls,
+      requestOpts,
+      detail.document_number
+    );
+    if (content) {
+      fullTextContent = content;
+    }
+    if (url) {
+      fullTextUrl = url;
     }
   }
 
