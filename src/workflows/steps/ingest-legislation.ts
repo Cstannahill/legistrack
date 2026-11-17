@@ -21,9 +21,10 @@ import {
   throwIfTotalNonPermanentChunkFailure,
   toRetryableStepError,
   type ItemFailureRecord,
+  type WorkflowTextBackfillSummary,
 } from "@/workflows/steps/ingestion-helpers";
 
-export type { TextBackfillSummary };
+export type { TextBackfillSummary, WorkflowTextBackfillSummary };
 
 const DEFAULT_INGEST_LOOKBACK_DAYS = 1;
 const DEFAULT_BILL_PAGE_SIZE = 250;
@@ -379,7 +380,7 @@ export async function ingestBillChunkStep(
  */
 export async function backfillBillTextsStep(
   batchSize?: number
-): Promise<TextBackfillSummary> {
+): Promise<WorkflowTextBackfillSummary> {
   "use step";
 
   const limit =

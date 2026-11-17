@@ -5,7 +5,6 @@ import {
   determineLookupWindow,
   formatFederalRegisterDate,
   persistExecutiveOrderPrisma,
-  type TextBackfillSummary,
 } from "@/lib/ingestion/executive-orders-service";
 import {
   fetchExecutiveOrdersPage,
@@ -21,6 +20,7 @@ import {
   throwIfTotalNonPermanentChunkFailure,
   toRetryableStepError,
   type ItemFailureRecord,
+  type WorkflowTextBackfillSummary,
 } from "@/workflows/steps/ingestion-helpers";
 import type {
   IngestChunkOutcome,
@@ -432,7 +432,7 @@ export async function ingestEoChunkStep(
  */
 export async function backfillEoTextsStep(
   batchSize?: number
-): Promise<TextBackfillSummary> {
+): Promise<WorkflowTextBackfillSummary> {
   "use step";
 
   const limit =

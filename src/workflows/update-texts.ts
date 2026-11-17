@@ -2,7 +2,7 @@ import { start } from "workflow/api";
 import { backfillEoTextsStep } from "@/workflows/steps/ingest-eo";
 import {
   backfillBillTextsStep,
-  type TextBackfillSummary,
+  type WorkflowTextBackfillSummary,
 } from "@/workflows/steps/ingest-legislation";
 import {
   completeJobRunStep,
@@ -21,10 +21,12 @@ export interface UpdateTextsWorkflowInput {
 export interface UpdateTextsWorkflowSummary {
   jobRunId: string;
   executionId?: string;
-  bills: TextBackfillSummary;
-  executiveOrders: TextBackfillSummary;
+  bills: WorkflowTextBackfillSummary;
+  executiveOrders: WorkflowTextBackfillSummary;
   itemsProcessed: number;
   itemsFailed: number;
+  expectedUnavailable: number;
+  unexpectedFailures: number;
   revalidated: boolean;
   triggeredSummarization: boolean;
   summarizationRunId?: string;
@@ -66,10 +68,18 @@ export async function updateTextsWorkflow(
     const itemsProcessed =
       itemsGainedFullText + bills.urlOnly + executiveOrders.urlOnly;
     const itemsFailed = bills.failed + executiveOrders.failed;
+    const expectedUnavailable =
+      (bills.unavailable ?? 0) + (executiveOrders.unavailable ?? 0);
+    const unexpectedFailures = Math.max(0, itemsFailed - expectedUnavailable);
 
-    if (totalChecked > 0 && itemsProcessed === 0 && itemsFailed > 0) {
+    if (
+      totalChecked > 0 &&
+      itemsProcessed === 0 &&
+      unexpectedFailures > 0 &&
+      expectedUnavailable === 0
+    ) {
       throw new Error(
-        `All ${itemsFailed} checked item(s) failed during text backfill (bills failed: ${bills.failed}, executive orders failed: ${executiveOrders.failed})`
+        `All ${unexpectedFailures} checked item(s) failed during text backfill (bills failed: ${bills.failed}, executive orders failed: ${executiveOrders.failed})`
       );
     }
 
@@ -114,14 +124,18 @@ export async function updateTextsWorkflow(
           updated: bills.updated,
           urlOnly: bills.urlOnly,
           failed: bills.failed,
+          unavailable: bills.unavailable ?? 0,
         },
         executiveOrders: {
           processed: executiveOrders.processed,
           updated: executiveOrders.updated,
           urlOnly: executiveOrders.urlOnly,
           failed: executiveOrders.failed,
+          unavailable: executiveOrders.unavailable ?? 0,
         },
         itemsGainedFullText,
+        expectedUnavailable,
+        unexpectedFailures,
         revalidated,
         triggeredSummarization,
         ...(summarizationRunId !== undefined ? { summarizationRunId } : {}),
@@ -140,6 +154,8 @@ export async function updateTextsWorkflow(
       executiveOrders,
       itemsProcessed,
       itemsFailed,
+      expectedUnavailable,
+      unexpectedFailures,
       revalidated,
       triggeredSummarization,
       ...(summarizationRunId !== undefined ? { summarizationRunId } : {}),

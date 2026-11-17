@@ -20,6 +20,10 @@ import { ingestExecutiveOrdersWorkflow } from "@/workflows/ingest-eo";
 import { ingestLegislationWorkflow } from "@/workflows/ingest-legislation";
 import * as ingestEoSteps from "@/workflows/steps/ingest-eo";
 import * as ingestLegislationSteps from "@/workflows/steps/ingest-legislation";
+import {
+  isExplicitPermanentMessage,
+  isTransientOrSystemicMessage,
+} from "@/workflows/steps/ingestion-helpers";
 import { summarizeLegislationWorkflow } from "@/workflows/summarize-legislation";
 import { updateTextsWorkflow } from "@/workflows/update-texts";
 
@@ -1163,8 +1167,454 @@ describe("Durable ingestion & text-backfill workflows + steps", () => {
         updated: 0,
         urlOnly: 0,
         failed: 1,
+        unavailable: 1,
         updatedIds: [],
       });
+    });
+
+    it("completes updateTextsWorkflow JobRun when items only have no published text yet (unavailable), and fails closed on genuine 100% errors", async () => {
+      // 1. Steady-state: bills have no published GPO text yet, EOs have no text/URL yet
+      mockBackfillMissingBillTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.("No bill text available yet", { billId: "b-1" });
+          opts?.logger?.warn?.("No bill text available yet", { billId: "b-2" });
+          return {
+            processed: 2,
+            updated: 0,
+            urlOnly: 0,
+            failed: 2,
+            updatedIds: [],
+          };
+        }
+      );
+      mockBackfillMissingEoTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.(
+            "No full text or URL available for executive order",
+            { executiveOrderId: "eo-1", documentNumber: "2026-00001" }
+          );
+          return {
+            processed: 1,
+            updated: 0,
+            urlOnly: 0,
+            failed: 1,
+            updatedIds: [],
+          };
+        }
+      );
+
+      const steadySummary = await updateTextsWorkflow({
+        executionId: "steady-unavailable",
+      });
+
+      expect(steadySummary).toMatchObject({
+        jobRunId: "jr-1",
+        itemsProcessed: 0,
+        itemsFailed: 3,
+        expectedUnavailable: 3,
+        unexpectedFailures: 0,
+        revalidated: false,
+        triggeredSummarization: false,
+      });
+      expect(mockDb.jobRun.update).toHaveBeenCalledTimes(1);
+      expect(mockDb.jobRun.update).toHaveBeenCalledWith({
+        where: { id: "jr-1" },
+        data: {
+          status: "COMPLETED",
+          completedAt: expect.any(Date),
+          itemsProcessed: 0,
+          itemsFailed: 3,
+          metadata: expect.objectContaining({
+            expectedUnavailable: 3,
+            unexpectedFailures: 0,
+            bills: expect.objectContaining({
+              failed: 2,
+              unavailable: 2,
+            }),
+            executiveOrders: expect.objectContaining({
+              failed: 1,
+              unavailable: 1,
+            }),
+          }),
+        },
+      });
+
+      // 2. Partial unavailable + isolated permanent error does NOT falsely fail whole JobRun
+      jest.clearAllMocks();
+      mockDb.jobRun.create.mockResolvedValue({ id: "jr-2" });
+      mockDb.jobRun.update.mockResolvedValue({ id: "jr-2" });
+      mockBackfillMissingBillTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.("No bill text available yet", { billId: "b-1" });
+          opts?.logger?.warn?.("Failed to backfill bill text", {
+            billId: "b-2",
+            error: "Congress API request failed (403 Forbidden): forbidden",
+          });
+          return {
+            processed: 2,
+            updated: 0,
+            urlOnly: 0,
+            failed: 2,
+            updatedIds: [],
+          };
+        }
+      );
+      mockBackfillMissingEoTexts.mockResolvedValueOnce({
+        processed: 0,
+        updated: 0,
+        urlOnly: 0,
+        failed: 0,
+        updatedIds: [],
+      });
+
+      const mixedUnavailableSummary = await updateTextsWorkflow({
+        executionId: "mixed-unavailable-and-403",
+      });
+      expect(mixedUnavailableSummary).toMatchObject({
+        jobRunId: "jr-2",
+        itemsProcessed: 0,
+        itemsFailed: 2,
+        expectedUnavailable: 1,
+        unexpectedFailures: 1,
+      });
+      expect(mockDb.jobRun.update).toHaveBeenCalledWith({
+        where: { id: "jr-2" },
+        data: expect.objectContaining({
+          status: "COMPLETED",
+          itemsProcessed: 0,
+          itemsFailed: 2,
+          metadata: expect.objectContaining({
+            expectedUnavailable: 1,
+            unexpectedFailures: 1,
+          }),
+        }),
+      });
+
+      // 3. Genuine 100% error batch (all permanent 403s, zero unavailable) marks JobRun FAILED
+      jest.clearAllMocks();
+      mockDb.jobRun.create.mockResolvedValue({ id: "jr-3" });
+      mockDb.jobRun.update.mockResolvedValue({ id: "jr-3" });
+      mockBackfillMissingBillTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.("Failed to backfill bill text", {
+            billId: "b-1",
+            error: "Congress API request failed (403 Forbidden): key invalid",
+          });
+          return {
+            processed: 1,
+            updated: 0,
+            urlOnly: 0,
+            failed: 1,
+            updatedIds: [],
+          };
+        }
+      );
+      mockBackfillMissingEoTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.("Failed to backfill executive order text", {
+            executiveOrderId: "eo-1",
+            documentNumber: "2026-00001",
+            error:
+              "Failed to fetch executive order text metadata 2026-00001: 403 ",
+          });
+          return {
+            processed: 1,
+            updated: 0,
+            urlOnly: 0,
+            failed: 1,
+            updatedIds: [],
+          };
+        }
+      );
+
+      await expect(
+        updateTextsWorkflow({ executionId: "all-genuine-403-failures" })
+      ).rejects.toThrow(/All 2 checked item\(s\) failed/);
+
+      expect(mockDb.jobRun.update).toHaveBeenCalledTimes(1);
+      expect(mockDb.jobRun.update).toHaveBeenCalledWith({
+        where: { id: "jr-3" },
+        data: {
+          status: "FAILED",
+          completedAt: expect.any(Date),
+          error: expect.stringMatching(/All 2 checked item\(s\) failed/),
+        },
+      });
+    });
+
+    it("parses FederalRegisterApiError statuses accurately and never false-matches Network titles or document numbers", async () => {
+      // FederalRegisterApiError 503 with empty statusText
+      expect(
+        isTransientOrSystemicMessage(
+          "Failed to fetch executive order text metadata 2026-00001: 503 "
+        )
+      ).toBe(true);
+      expect(
+        isTransientOrSystemicMessage(
+          "Federal Register API error: 503  - maintenance"
+        )
+      ).toBe(true);
+      expect(
+        isExplicitPermanentMessage(
+          "Failed to fetch executive order text metadata 2026-00001: 403 "
+        )
+      ).toBe(true);
+
+      // Document numbers, bill numbers, and titles with "Network" or ordinal numbers must NOT match transient errors
+      const networkTitleError =
+        "Invalid signingDate for executive order 14201-Network Security Act";
+      expect(isTransientOrSystemicMessage(networkTitleError)).toBe(false);
+      expect(isExplicitPermanentMessage(networkTitleError)).toBe(true);
+      expect(
+        isTransientOrSystemicMessage(
+          "Invalid signingDate for document 2026-00503: bad date"
+        )
+      ).toBe(false);
+      expect(
+        isTransientOrSystemicMessage("Bill H.R. 500: missing sponsor")
+      ).toBe(false);
+      expect(
+        isTransientOrSystemicMessage("Title: 500th Anniversary Celebration Act")
+      ).toBe(false);
+
+      // Mixed EO backfill with ": 503 " triggers RetryableError
+      mockBackfillMissingEoTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.("Failed to backfill executive order text", {
+            executiveOrderId: "eo-1",
+            documentNumber: "2026-00001",
+            error:
+              "Failed to fetch executive order text metadata 2026-00001: 503 ",
+          });
+          return {
+            processed: 2,
+            updated: 1,
+            urlOnly: 0,
+            failed: 1,
+            updatedIds: ["eo-0"],
+          };
+        }
+      );
+
+      await expect(ingestEoSteps.backfillEoTextsStep(5)).rejects.toBeInstanceOf(
+        RetryableError
+      );
+
+      // 100%-failed EO backfill with ": 403 " does NOT trigger RetryableError (permanent)
+      mockBackfillMissingEoTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.("Failed to backfill executive order text", {
+            executiveOrderId: "eo-2",
+            documentNumber: "2026-00002",
+            error:
+              "Failed to fetch executive order text metadata 2026-00002: 403 ",
+          });
+          return {
+            processed: 1,
+            updated: 0,
+            urlOnly: 0,
+            failed: 1,
+            updatedIds: [],
+          };
+        }
+      );
+
+      await expect(ingestEoSteps.backfillEoTextsStep(5)).resolves.toEqual({
+        processed: 1,
+        updated: 0,
+        urlOnly: 0,
+        failed: 1,
+        unavailable: 0,
+        updatedIds: [],
+      });
+
+      // Whole EO chunk failing on Invalid signingDate with "Network" in title does NOT trigger RetryableError
+      mockHydrateExecutiveOrder.mockResolvedValueOnce({
+        documentNumber: "2026-00009",
+        orderNumber: 14209,
+        executiveOrderType: "EXECUTIVE_ORDER",
+        title: "Network Security Order",
+        signingDate: new Date("2026-11-15T00:00:00Z"),
+        presidentName: "Donald J. Trump",
+      });
+      mockPersistExecutiveOrderPrisma.mockResolvedValueOnce({
+        action: "failed",
+        identifier: "14209-Network Security Order",
+        message: networkTitleError,
+      });
+
+      const networkOutcome = await ingestEoSteps.ingestEoChunkStep([
+        makeEoDocument(9),
+      ]);
+      expect(networkOutcome).toMatchObject({
+        processed: 1,
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 1,
+      });
+    });
+
+    it("throws RetryableError on transient list fetches and avoids spurious RetryableError when EO text candidate fallback succeeds", async () => {
+      // 1. fetchBillListStep transient 429 throws RetryableError (retryAfter: 2m)
+      mockFetchBillPage.mockRejectedValueOnce(
+        Object.assign(
+          new Error("Congress API request failed (429 Too Many Requests): slow"),
+          { status: 429 }
+        )
+      );
+      await expect(
+        ingestLegislationSteps.fetchBillListStep()
+      ).rejects.toMatchObject({
+        name: "RetryableError",
+        retryAfter: "2m",
+      });
+
+      const permanent404 = Object.assign(
+        new Error("Congress API request failed (404 Not Found)"),
+        { status: 404 }
+      );
+      mockFetchBillPage.mockRejectedValueOnce(permanent404);
+      await expect(
+        ingestLegislationSteps.fetchBillListStep()
+      ).rejects.toBe(permanent404);
+
+      // 2. fetchExecutiveOrderListStep transient Federal Register 503 throws RetryableError (retryAfter: 1m)
+      mockFetchExecutiveOrdersPage.mockRejectedValueOnce(
+        new Error("Federal Register API error: 503  - maintenance")
+      );
+      await expect(
+        ingestEoSteps.fetchExecutiveOrderListStep()
+      ).rejects.toMatchObject({
+        name: "RetryableError",
+        retryAfter: "1m",
+      });
+
+      // 3. EO candidate body_html_url returns 503, raw_text_url fallback succeeds -> NO RetryableError
+      mockBackfillMissingEoTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.(
+            "Executive order text candidate returned non-200",
+            {
+              documentNumber: "2026-00001",
+              status: 503,
+              url: "https://example.com/body.html",
+            }
+          );
+          return {
+            processed: 1,
+            updated: 1,
+            urlOnly: 0,
+            failed: 0,
+            updatedIds: ["eo-1"],
+          };
+        }
+      );
+      await expect(ingestEoSteps.backfillEoTextsStep(5)).resolves.toEqual({
+        processed: 1,
+        updated: 1,
+        urlOnly: 0,
+        failed: 0,
+        unavailable: 0,
+        updatedIds: ["eo-1"],
+      });
+
+      // 4. Mixed batch: EO 1 candidate fallback succeeds (503 then 200), EO 2 simply has no text -> NO spurious RetryableError
+      mockBackfillMissingEoTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.(
+            "Executive order text candidate returned non-200",
+            {
+              documentNumber: "2026-00001",
+              status: 503,
+              url: "https://example.com/body.html",
+            }
+          );
+          opts?.logger?.warn?.(
+            "No full text or URL available for executive order",
+            {
+              executiveOrderId: "eo-2",
+              documentNumber: "2026-00002",
+            }
+          );
+          return {
+            processed: 2,
+            updated: 1,
+            urlOnly: 0,
+            failed: 1,
+            updatedIds: ["eo-1"],
+          };
+        }
+      );
+      await expect(ingestEoSteps.backfillEoTextsStep(5)).resolves.toEqual({
+        processed: 2,
+        updated: 1,
+        urlOnly: 0,
+        failed: 1,
+        unavailable: 1,
+        updatedIds: ["eo-1"],
+      });
+
+      // 5. All candidates for EO 1 fail with 503 leaving it without text (failed: 1) -> DOES throw RetryableError
+      mockBackfillMissingEoTexts.mockImplementationOnce(
+        async (
+          _limit: number,
+          opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }
+        ) => {
+          opts?.logger?.warn?.(
+            "Executive order text candidate returned non-200",
+            {
+              documentNumber: "2026-00001",
+              status: 503,
+              url: "https://example.com/body.html",
+            }
+          );
+          opts?.logger?.warn?.(
+            "No full text or URL available for executive order",
+            {
+              executiveOrderId: "eo-1",
+              documentNumber: "2026-00001",
+            }
+          );
+          return {
+            processed: 1,
+            updated: 0,
+            urlOnly: 0,
+            failed: 1,
+            updatedIds: [],
+          };
+        }
+      );
+      await expect(ingestEoSteps.backfillEoTextsStep(5)).rejects.toBeInstanceOf(
+        RetryableError
+      );
     });
 
     it("marks JobRun FAILED and rejects without calling completeJobRunStep when 100% of items fail in ingestLegislationWorkflow, ingestExecutiveOrdersWorkflow, or updateTextsWorkflow", async () => {

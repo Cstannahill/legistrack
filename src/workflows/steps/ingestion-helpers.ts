@@ -5,7 +5,11 @@ import type {
 } from "@/lib/ingestion/bills-service";
 
 const TRANSIENT_HTTP_STATUSES = new Set([408, 429]);
-const PERMANENT_HTTP_STATUSES = new Set([400, 401, 403, 404, 422]);
+const PERMANENT_HTTP_STATUSES = new Set([400, 401, 403, 404, 405, 410, 422]);
+
+export interface WorkflowTextBackfillSummary extends TextBackfillSummary {
+  unavailable: number;
+}
 
 const TRANSIENT_ERROR_CODES = new Set([
   "ECONNRESET",
@@ -53,18 +57,18 @@ const TRANSIENT_ERROR_NAMES = new Set([
 ]);
 
 const TRANSIENT_MESSAGE_PATTERNS: readonly RegExp[] = [
-  /(?:\(\s*|\b(?:http|api|status)\s*[:\s]\s*)(?:408|429|5\d{2})\b/i,
+  /(?:[:(]\s*|\b(?:http(?:\/[0-9.]+)?|api|status|error)\b[:\s]+)(?<![0-9])(?:408|429|5\d{2})\b/i,
   /\b(?:408\s+request\s+timeout|429\s+too\s+many\s+requests|500\s+internal\s+server\s+error|502\s+bad\s+gateway|503\s+service\s+unavailable|504\s+gateway\s+timeout)\b/i,
   /\b(?:rate\s*limit(?:ed)?|too\s+many\s+requests)\b/i,
-  /\b(?:timed?\s*out|request\s+timeout|fetch\s+failed|network(?:\s+error|\s+failure)?|socket\s+hang\s+up|econnreset|etimedout|econnrefused|enotfound|eai_again|epipe)\b/i,
+  /\b(?:timed?\s*out|request\s+timeout|fetch\s+failed|network\s+(?:(?:is\s+)?unreachable|error|failure|timeout|timed?\s*out|reset|unavailable|connection\s+(?:failed|error|lost|reset))|socket\s+hang\s+up|econnreset|etimedout|econnrefused|enotfound|eai_again|epipe)\b/i,
   /\b(?:can't\s+reach\s+database\s+server|connection\s+(?:terminated|refused|reset|closed|lost|pool|timed?\s*out)|database\s+(?:unavailable|connection|timeout|error)|prisma\s+(?:query|client|connection)?\s*(?:timeout|error|pool)|pool\s+timeout|deadlock|too\s+many\s+connections|pgbouncer|server\s+closed\s+the\s+connection)\b/i,
   /\bP(?:1000|1001|1002|1008|1017|2024|2034)\b/,
 ];
 
 const PERMANENT_MESSAGE_PATTERNS: readonly RegExp[] = [
-  /(?:\(\s*|\b(?:http|api|status)\s*[:\s]\s*)(?:400|401|403|404|422)\b/i,
-  /\b(?:400\s+bad\s+request|401\s+unauthorized|403\s+forbidden|404\s+not\s+found|422\s+unprocessable)\b/i,
-  /\b(?:missing\s+signing\s+date|unique\s+constraint|foreign\s+key\s+constraint|constraint\s+(?:violation|failure|error)|null\s+constraint|invalid\s+(?:input|argument|identifier|date|start\s+date|end\s+date)|no\s+(?:bill\s+)?text\s+available\s+yet|no\s+full\s+text\s+or\s+url\s+available|could\s+not\s+extract\s+federal\s+register\s+document\s+number)\b/i,
+  /(?:[:(]\s*|\b(?:http(?:\/[0-9.]+)?|api|status|error)\b[:\s]+)(?<![0-9])(?:400|401|403|404|405|410|422)\b/i,
+  /\b(?:400\s+bad\s+request|401\s+unauthorized|403\s+forbidden|404\s+not\s+found|405\s+method\s+not\s+allowed|410\s+gone|422\s+unprocessable)\b/i,
+  /\b(?:missing\s+signing\s+date|unique\s+constraint|foreign\s+key\s+constraint|constraint\s+(?:violation|failure|error)|null\s+constraint|invalid\s+(?:input|argument|identifier|date|signing(?:\s|_)?date|start\s+date|end\s+date)|no\s+(?:bill\s+)?text\s+available\s+yet|no\s+full\s+text\s+or\s+url\s+available|could\s+not\s+extract\s+federal\s+register\s+document\s+number)\b/i,
   /\bP20(?:0[0-7]|1[1245]|25)\b/,
 ];
 
@@ -276,17 +280,28 @@ export function throwIfTotalNonPermanentChunkFailure(
   }
 }
 
+interface CandidateWarningRecord {
+  detail: string;
+  documentNumber?: string;
+}
+
 interface CapturingBackfillLoggerState {
   logger: IngestionLogger;
   transientErrors: string[];
+  transientCandidateWarnings: CandidateWarningRecord[];
   nonPermanentErrors: string[];
   permanentFailureCount: () => number;
+  unavailableCount: () => number;
+  failedDocumentNumbers: Set<string>;
 }
 
 function createCapturingBackfillLogger(): CapturingBackfillLoggerState {
   const transientErrors: string[] = [];
+  const transientCandidateWarnings: CandidateWarningRecord[] = [];
   const nonPermanentErrors: string[] = [];
+  const failedDocumentNumbers = new Set<string>();
   let permanentFailures = 0;
+  let unavailableItems = 0;
 
   const inspectWarning = (
     message: string,
@@ -296,13 +311,21 @@ function createCapturingBackfillLogger(): CapturingBackfillLoggerState {
       typeof metadata?.status === "number" ? metadata.status : undefined;
     const errorDetail =
       typeof metadata?.error === "string" ? metadata.error : undefined;
+    const documentNumber =
+      typeof metadata?.documentNumber === "string" &&
+      metadata.documentNumber.trim().length > 0
+        ? metadata.documentNumber.trim()
+        : undefined;
 
     if (
       message === "No bill text available yet" ||
       message === "No full text or URL available for executive order" ||
       message === "Could not extract Federal Register document number"
     ) {
-      permanentFailures += 1;
+      unavailableItems += 1;
+      if (documentNumber) {
+        failedDocumentNumbers.add(documentNumber);
+      }
       return;
     }
 
@@ -310,6 +333,9 @@ function createCapturingBackfillLogger(): CapturingBackfillLoggerState {
       message === "Failed to backfill bill text" ||
       message === "Failed to backfill executive order text"
     ) {
+      if (documentNumber) {
+        failedDocumentNumbers.add(documentNumber);
+      }
       const detail = errorDetail ?? message;
       if (isTransientOrSystemicMessage(detail)) {
         transientErrors.push(detail);
@@ -326,7 +352,10 @@ function createCapturingBackfillLogger(): CapturingBackfillLoggerState {
       message === "Executive order text candidate returned non-200"
     ) {
       if (status !== undefined && isRetryableStatusCode(status)) {
-        transientErrors.push(`${message} (status ${status})`);
+        transientCandidateWarnings.push({
+          detail: `${message} (status ${status})`,
+          documentNumber,
+        });
       }
       return;
     }
@@ -337,7 +366,10 @@ function createCapturingBackfillLogger(): CapturingBackfillLoggerState {
       errorDetail &&
       isTransientOrSystemicMessage(errorDetail)
     ) {
-      transientErrors.push(errorDetail);
+      transientCandidateWarnings.push({
+        detail: errorDetail,
+        documentNumber,
+      });
     }
   };
 
@@ -357,15 +389,19 @@ function createCapturingBackfillLogger(): CapturingBackfillLoggerState {
   return {
     logger,
     transientErrors,
+    transientCandidateWarnings,
     nonPermanentErrors,
     permanentFailureCount: () => permanentFailures,
+    unavailableCount: () => unavailableItems,
+    failedDocumentNumbers,
   };
 }
 
 /**
  * Executes a text-backfill service with transient/systemic failure detection,
  * throwing `RetryableError` on upstream/DB outages or 100%-non-permanent batch
- * failures while preserving isolated permanent "text not yet available" items.
+ * failures while tracking expected steady-state unavailable outcomes separately
+ * from genuine errors.
  */
 export async function runTextBackfillStep(
   limit: number,
@@ -374,7 +410,7 @@ export async function runTextBackfillStep(
     limit: number,
     logger: IngestionLogger
   ) => Promise<TextBackfillSummary>
-): Promise<TextBackfillSummary> {
+): Promise<WorkflowTextBackfillSummary> {
   const capture = createCapturingBackfillLogger();
 
   let summary: TextBackfillSummary;
@@ -391,16 +427,37 @@ export async function runTextBackfillStep(
     throw toRetryableStepError(capture.transientErrors[0], contextPrefix);
   }
 
+  if (summary.failed > 0 && capture.transientCandidateWarnings.length > 0) {
+    const matchingCandidateWarning = capture.transientCandidateWarnings.find(
+      (warning) =>
+        !warning.documentNumber ||
+        capture.failedDocumentNumbers.size === 0 ||
+        capture.failedDocumentNumbers.has(warning.documentNumber)
+    );
+    if (matchingCandidateWarning) {
+      throw toRetryableStepError(
+        matchingCandidateWarning.detail,
+        contextPrefix
+      );
+    }
+  }
+
+  const unavailable = Math.min(summary.failed, capture.unavailableCount());
+
   if (
     summary.processed > 0 &&
     summary.updated === 0 &&
     summary.urlOnly === 0 &&
     summary.failed === summary.processed &&
     capture.nonPermanentErrors.length > 0 &&
-    capture.permanentFailureCount() === 0
+    capture.permanentFailureCount() === 0 &&
+    unavailable === 0
   ) {
     throw toRetryableStepError(capture.nonPermanentErrors[0], contextPrefix);
   }
 
-  return summary;
+  return {
+    ...summary,
+    unavailable,
+  };
 }
