@@ -113,27 +113,39 @@ export async function callGeminiStructured<T>(
     });
   }
 
-  const quota = await getRemainingGeminiFallbackQuota();
-  if (quota.used >= quota.limit) {
-    throw new FallbackCapReachedError(
-      `Gemini daily fallback cap reached (${quota.used}/${quota.limit})`,
-      {
-        reason: "daily-cap-reached",
-        used: quota.used,
-        limit: quota.limit,
-      }
-    );
-  }
+  const limit = getGeminiFallbackDailyLimit();
+  const jobRun = await db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(948271)`;
 
-  const jobRun = await db.jobRun.create({
-    data: {
-      jobName: GEMINI_FALLBACK_JOB_NAME,
-      status: "RUNNING",
-      metadata: {
-        model: GEMINI_FALLBACK_MODEL,
-        itemIds: opts.itemIds,
+    const utcDayStart = getUtcDayStart();
+    const used = await tx.jobRun.count({
+      where: {
+        jobName: GEMINI_FALLBACK_JOB_NAME,
+        startedAt: { gte: utcDayStart },
       },
-    },
+    });
+
+    if (used >= limit) {
+      throw new FallbackCapReachedError(
+        `Gemini daily fallback cap reached (${used}/${limit})`,
+        {
+          reason: "daily-cap-reached",
+          used,
+          limit,
+        }
+      );
+    }
+
+    return tx.jobRun.create({
+      data: {
+        jobName: GEMINI_FALLBACK_JOB_NAME,
+        status: "RUNNING",
+        metadata: {
+          model: GEMINI_FALLBACK_MODEL,
+          itemIds: opts.itemIds,
+        },
+      },
+    });
   });
 
   try {
@@ -150,13 +162,9 @@ export async function callGeminiStructured<T>(
       },
     });
 
-    if (
-      interaction.status === "failed" ||
-      interaction.status === "cancelled" ||
-      interaction.status === "budget_exceeded"
-    ) {
+    if (interaction.status !== "completed") {
       throw new Error(
-        `Gemini interaction ended with status "${interaction.status}"`
+        `Gemini interaction ended with status "${String(interaction.status)}"`
       );
     }
 

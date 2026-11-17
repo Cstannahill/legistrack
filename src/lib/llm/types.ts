@@ -42,7 +42,7 @@ export const SummaryAndCategoryItemSchema = z.object({
   keyPoints: z.array(z.string().trim().min(1)).default([]),
   impactAreas: z.array(z.string().trim().min(1)).default([]),
   categories: z.array(z.string().trim().min(1)).max(3).default([]),
-  confidence: z.number().min(0).max(1).optional(),
+  confidence: z.number().min(0).max(1).nullish(),
 });
 
 export const SummaryAndCategoryResultSchema = SummaryAndCategoryItemSchema;
@@ -70,18 +70,75 @@ export type LlmBatchItemOutcome =
   | ({ id: string; ok: true } & SummaryAndCategoryPayload)
   | { id: string; ok: false; error: string };
 
+function normalizeStrictJsonSchemaNode(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    return node.map((item) => normalizeStrictJsonSchemaNode(item));
+  }
+  if (typeof node !== "object" || node === null) {
+    return node;
+  }
+
+  const record = node as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(record)) {
+    if (key === "$schema" || key === "default") {
+      continue;
+    }
+    if (
+      key === "properties" &&
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value)
+    ) {
+      const normalizedProps: Record<string, unknown> = {};
+      for (const [propKey, propSchema] of Object.entries(
+        value as Record<string, unknown>
+      )) {
+        normalizedProps[propKey] = normalizeStrictJsonSchemaNode(propSchema);
+      }
+      out.properties = normalizedProps;
+      continue;
+    }
+    if (
+      (key === "$defs" || key === "definitions") &&
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value)
+    ) {
+      const normalizedDefs: Record<string, unknown> = {};
+      for (const [defKey, defSchema] of Object.entries(
+        value as Record<string, unknown>
+      )) {
+        normalizedDefs[defKey] = normalizeStrictJsonSchemaNode(defSchema);
+      }
+      out[key] = normalizedDefs;
+      continue;
+    }
+    out[key] = normalizeStrictJsonSchemaNode(value);
+  }
+
+  if (
+    out.type === "object" &&
+    typeof out.properties === "object" &&
+    out.properties !== null &&
+    !Array.isArray(out.properties)
+  ) {
+    out.additionalProperties = false;
+    out.required = Object.keys(out.properties as Record<string, unknown>);
+  }
+
+  return out;
+}
+
 /**
- * Converts a Zod schema into a plain JSON Schema object compatible with
- * Gemini `interactions.create` (`response_format.schema`) and OpenRouter JSON schemas.
+ * Converts a Zod schema into a strict JSON Schema object compatible with
+ * Gemini `interactions.create` (`response_format.schema`) and OpenAI/OpenRouter `strict: true`
+ * (every property listed in `required`, `additionalProperties: false`, no `$schema` or `default`).
  */
 export function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
-  const raw = z.toJSONSchema(schema, { unrepresentable: "any" }) as Record<
-    string,
-    unknown
-  >;
-  const rest = { ...raw };
-  delete rest.$schema;
-  return rest;
+  const raw = z.toJSONSchema(schema, { unrepresentable: "any" });
+  return normalizeStrictJsonSchemaNode(raw) as Record<string, unknown>;
 }
 
 export type FallbackCapReason =

@@ -9,19 +9,33 @@ import {
   DEFAULT_OPENROUTER_MODELS,
   FallbackCapReachedError,
   GEMINI_FALLBACK_MODEL,
+  SummaryAndCategoryBatchSchema,
   SummaryAndCategoryItemSchema,
   toJsonSchema,
 } from "@/lib/llm/types";
 
-jest.mock("@/lib/db", () => ({
-  db: {
+jest.mock("@/lib/db", () => {
+  const tx = {
+    $executeRaw: jest.fn(),
     jobRun: {
       count: jest.fn(),
       create: jest.fn(),
-      update: jest.fn(),
     },
-  },
-}));
+  };
+  return {
+    db: {
+      $transaction: jest.fn(
+        async (cb: (client: typeof tx) => Promise<unknown>) => cb(tx)
+      ),
+      jobRun: {
+        count: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      __tx: tx,
+    },
+  };
+});
 
 jest.mock("@google/genai", () => {
   const create = jest.fn();
@@ -34,13 +48,23 @@ jest.mock("@google/genai", () => {
   };
 });
 
+interface MockTx {
+  $executeRaw: jest.Mock;
+  jobRun: {
+    count: jest.Mock;
+    create: jest.Mock;
+  };
+}
+
 interface MockDb {
   db: {
+    $transaction: jest.Mock;
     jobRun: {
       count: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
     };
+    __tx: MockTx;
   };
 }
 
@@ -119,7 +143,7 @@ describe("LLM shared types and Zod schemas", () => {
     expect(GEMINI_FALLBACK_MODEL).toBe("gemini-3.8-flash");
   });
 
-  it("validates SummaryAndCategoryItemSchema and CategorizeOnlySchema constraints", () => {
+  it("validates SummaryAndCategoryItemSchema (including nullable/omitted confidence) and CategorizeOnlySchema constraints", () => {
     const validItem = SummaryAndCategoryItemSchema.parse({
       id: "bill-123",
       summary: VALID_SUMMARY_20_WORDS,
@@ -129,6 +153,16 @@ describe("LLM shared types and Zod schemas", () => {
       confidence: 0.92,
     });
     expect(validItem.id).toBe("bill-123");
+
+    const nullableConfidenceItem = SummaryAndCategoryItemSchema.parse({
+      id: "bill-124",
+      summary: VALID_SUMMARY_20_WORDS,
+      keyPoints: [],
+      impactAreas: [],
+      categories: [],
+      confidence: null,
+    });
+    expect(nullableConfidenceItem.confidence).toBeNull();
 
     expect(() =>
       SummaryAndCategoryItemSchema.parse({
@@ -147,12 +181,43 @@ describe("LLM shared types and Zod schemas", () => {
     ).toThrow();
   });
 
-  it("converts Zod schemas into clean JSON Schema without $schema metadata", () => {
-    const jsonSchema = toJsonSchema(CategorizeOnlySchema);
+  it("converts Zod schemas into strict JSON Schema with every property required and no $schema or default keywords", () => {
+    const itemSchema = toJsonSchema(SummaryAndCategoryItemSchema);
+    const batchSchema = toJsonSchema(SummaryAndCategoryBatchSchema);
+    const catSchema = toJsonSchema(CategorizeOnlySchema);
 
-    expect(jsonSchema).not.toHaveProperty("$schema");
-    expect(jsonSchema.type).toBe("object");
-    expect(jsonSchema.properties).toBeDefined();
+    expect(itemSchema).not.toHaveProperty("$schema");
+    expect(itemSchema.additionalProperties).toBe(false);
+    expect(itemSchema.required).toEqual(
+      Object.keys(itemSchema.properties as Record<string, unknown>)
+    );
+    expect(itemSchema.required).toContain("confidence");
+
+    const batchItemSchema = (
+      (batchSchema.properties as Record<string, { items: Record<string, unknown> }>)
+        .items.items
+    );
+    expect(batchSchema).not.toHaveProperty("$schema");
+    expect(batchSchema.additionalProperties).toBe(false);
+    expect(batchSchema.required).toEqual(["items"]);
+    expect(batchItemSchema.additionalProperties).toBe(false);
+    expect(batchItemSchema.required).toEqual(
+      Object.keys(batchItemSchema.properties as Record<string, unknown>)
+    );
+    expect(batchItemSchema.required).toContain("confidence");
+
+    expect(catSchema).not.toHaveProperty("$schema");
+    expect(catSchema.additionalProperties).toBe(false);
+    expect(catSchema.required).toEqual(["categories"]);
+
+    for (const serialized of [
+      JSON.stringify(itemSchema),
+      JSON.stringify(batchSchema),
+      JSON.stringify(catSchema),
+    ]) {
+      expect(serialized).not.toContain('"$schema"');
+      expect(serialized).not.toContain('"default"');
+    }
   });
 });
 
@@ -161,6 +226,9 @@ describe("Gemini fallback quota & direct interactions adapter", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDb.$transaction.mockImplementation(
+      async (cb: (client: MockTx) => Promise<unknown>) => cb(mockDb.__tx)
+    );
     process.env = {
       ...originalEnv,
       GEMINI_API_KEY: "test-gemini-key",
@@ -199,8 +267,9 @@ describe("Gemini fallback quota & direct interactions adapter", () => {
     expect(quota).toEqual({ used: 0, limit: 0, remaining: 0 });
   });
 
-  it("throws FallbackCapReachedError without constructing GoogleGenAI when daily cap is reached", async () => {
-    mockDb.jobRun.count.mockResolvedValueOnce(20);
+  it("throws FallbackCapReachedError without constructing GoogleGenAI when daily cap is reached inside locked transaction", async () => {
+    mockDb.__tx.$executeRaw.mockResolvedValueOnce(1);
+    mockDb.__tx.jobRun.count.mockResolvedValueOnce(20);
 
     const TestSchema = z.object({ categories: z.array(z.string()).max(3) });
 
@@ -214,9 +283,70 @@ describe("Gemini fallback quota & direct interactions adapter", () => {
       })
     ).rejects.toBeInstanceOf(FallbackCapReachedError);
 
+    expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockDb.__tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockDb.__tx.jobRun.count).toHaveBeenCalledTimes(1);
+    expect(mockDb.__tx.jobRun.create).not.toHaveBeenCalled();
     expect(mockGenAi.GoogleGenAI).not.toHaveBeenCalled();
     expect(mockGenAi.__mockCreate).not.toHaveBeenCalled();
-    expect(mockDb.jobRun.create).not.toHaveBeenCalled();
+  });
+
+  it("serializes concurrent quota checks via advisory-locked transaction so cap is never overshot", async () => {
+    process.env.GEMINI_FALLBACK_DAILY_LIMIT = "1";
+
+    let persistedCount = 0;
+    let txQueue = Promise.resolve();
+
+    mockDb.$transaction.mockImplementation(
+      (cb: (client: MockTx) => Promise<unknown>) => {
+        const next = txQueue.then(async () => {
+          const txClient: MockTx = {
+            $executeRaw: jest.fn().mockResolvedValue(1),
+            jobRun: {
+              count: jest.fn(async () => persistedCount),
+              create: jest.fn(async () => {
+                persistedCount += 1;
+                return { id: `job-run-${persistedCount}` };
+              }),
+            },
+          };
+          return cb(txClient);
+        });
+        txQueue = next.then(
+          () => undefined,
+          () => undefined
+        );
+        return next;
+      }
+    );
+
+    mockDb.jobRun.update.mockResolvedValue({ id: "job-run-1" });
+    mockGenAi.__mockCreate.mockResolvedValue({
+      id: "interaction-concurrent",
+      status: "completed",
+      output_text: JSON.stringify({ categories: ["healthcare"] }),
+    });
+
+    const req = {
+      systemInstruction: "Categorize.",
+      prompt: "Prompt",
+      schema: CategorizeOnlySchema,
+      jsonSchema: toJsonSchema(CategorizeOnlySchema),
+      itemIds: ["bill-concurrent"],
+    };
+
+    const [first, second] = await Promise.allSettled([
+      callGeminiStructured(req),
+      callGeminiStructured(req),
+    ]);
+
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("rejected");
+    if (second.status === "rejected") {
+      expect(second.reason).toBeInstanceOf(FallbackCapReachedError);
+    }
+    expect(persistedCount).toBe(1);
+    expect(mockGenAi.__mockCreate).toHaveBeenCalledTimes(1);
   });
 
   it("throws FallbackCapReachedError without calling Gemini when GEMINI_FALLBACK_ENABLED is false", async () => {
@@ -253,9 +383,10 @@ describe("Gemini fallback quota & direct interactions adapter", () => {
     expect(mockGenAi.__mockCreate).not.toHaveBeenCalled();
   });
 
-  it("creates JobRun RUNNING, calls interactions.create with store: false and response_format, validates output_text, and marks COMPLETED", async () => {
-    mockDb.jobRun.count.mockResolvedValueOnce(3);
-    mockDb.jobRun.create.mockResolvedValueOnce({ id: "job-run-42" });
+  it("acquires advisory lock, creates JobRun RUNNING inside $transaction, calls interactions.create with store: false and response_format, validates output_text, and marks COMPLETED", async () => {
+    mockDb.__tx.$executeRaw.mockResolvedValueOnce(1);
+    mockDb.__tx.jobRun.count.mockResolvedValueOnce(3);
+    mockDb.__tx.jobRun.create.mockResolvedValueOnce({ id: "job-run-42" });
     mockDb.jobRun.update.mockResolvedValueOnce({ id: "job-run-42" });
 
     const payload = {
@@ -287,7 +418,20 @@ describe("Gemini fallback quota & direct interactions adapter", () => {
       model: "gemini-3.8-flash",
     });
 
-    expect(mockDb.jobRun.create).toHaveBeenCalledWith({
+    expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockDb.__tx.$executeRaw).toHaveBeenCalledTimes(1);
+    const lockCallText = (
+      mockDb.__tx.$executeRaw.mock.calls[0][0] as TemplateStringsArray
+    ).join("");
+    expect(lockCallText).toContain("pg_advisory_xact_lock(948271)");
+
+    const lockOrder = mockDb.__tx.$executeRaw.mock.invocationCallOrder[0];
+    const countOrder = mockDb.__tx.jobRun.count.mock.invocationCallOrder[0];
+    const createOrder = mockDb.__tx.jobRun.create.mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(countOrder);
+    expect(countOrder).toBeLessThan(createOrder);
+
+    expect(mockDb.__tx.jobRun.create).toHaveBeenCalledWith({
       data: {
         jobName: "llm-fallback:gemini-3.8-flash",
         status: "RUNNING",
@@ -325,8 +469,9 @@ describe("Gemini fallback quota & direct interactions adapter", () => {
   });
 
   it("marks JobRun FAILED and rethrows when Gemini output fails Zod validation or API errors", async () => {
-    mockDb.jobRun.count.mockResolvedValueOnce(1);
-    mockDb.jobRun.create.mockResolvedValueOnce({ id: "job-run-99" });
+    mockDb.__tx.$executeRaw.mockResolvedValueOnce(1);
+    mockDb.__tx.jobRun.count.mockResolvedValueOnce(1);
+    mockDb.__tx.jobRun.create.mockResolvedValueOnce({ id: "job-run-99" });
     mockDb.jobRun.update.mockResolvedValueOnce({ id: "job-run-99" });
 
     mockGenAi.__mockCreate.mockResolvedValueOnce({
@@ -356,9 +501,55 @@ describe("Gemini fallback quota & direct interactions adapter", () => {
     });
   });
 
+  it("rejects any non-completed interaction status (e.g., incomplete or requires_continuation) and marks JobRun FAILED", async () => {
+    for (const status of [
+      "incomplete",
+      "requires_continuation",
+      "in_progress",
+      "requires_action",
+      "queued",
+    ]) {
+      mockDb.__tx.$executeRaw.mockResolvedValueOnce(1);
+      mockDb.__tx.jobRun.count.mockResolvedValueOnce(2);
+      mockDb.__tx.jobRun.create.mockResolvedValueOnce({
+        id: `job-run-${status}`,
+      });
+      mockDb.jobRun.update.mockResolvedValueOnce({
+        id: `job-run-${status}`,
+      });
+
+      mockGenAi.__mockCreate.mockResolvedValueOnce({
+        id: `interaction-${status}`,
+        status,
+        output_text: JSON.stringify({ categories: ["healthcare"] }),
+      });
+
+      await expect(
+        callGeminiStructured({
+          systemInstruction: "Categorize.",
+          prompt: "Prompt",
+          schema: CategorizeOnlySchema,
+          jsonSchema: toJsonSchema(CategorizeOnlySchema),
+          itemIds: ["bill-status"],
+        })
+      ).rejects.toThrow(`Gemini interaction ended with status "${status}"`);
+
+      expect(mockDb.jobRun.update).toHaveBeenLastCalledWith({
+        where: { id: `job-run-${status}` },
+        data: expect.objectContaining({
+          status: "FAILED",
+          itemsFailed: 1,
+          completedAt: expect.any(Date),
+          error: `Gemini interaction ended with status "${status}"`,
+        }),
+      });
+    }
+  });
+
   it("marks JobRun FAILED and rethrows when interactions.create rejects", async () => {
-    mockDb.jobRun.count.mockResolvedValueOnce(2);
-    mockDb.jobRun.create.mockResolvedValueOnce({ id: "job-run-100" });
+    mockDb.__tx.$executeRaw.mockResolvedValueOnce(1);
+    mockDb.__tx.jobRun.count.mockResolvedValueOnce(2);
+    mockDb.__tx.jobRun.create.mockResolvedValueOnce({ id: "job-run-100" });
     mockDb.jobRun.update.mockResolvedValueOnce({ id: "job-run-100" });
 
     mockGenAi.__mockCreate.mockRejectedValueOnce(
