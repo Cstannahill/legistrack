@@ -6,9 +6,11 @@ import {
 } from "@/lib/llm/router";
 import { callGeminiStructured } from "@/lib/llm/gemini";
 import {
+  CategorizeOnlySchema,
   DEFAULT_OPENROUTER_MODELS,
   FallbackCapReachedError,
   GEMINI_FALLBACK_MODEL,
+  SummaryAndCategoryBatchSchema,
   type LlmCategoryInput,
   type LlmLegislationInput,
 } from "@/lib/llm/types";
@@ -196,6 +198,7 @@ describe("Unified OpenRouter -> Gemini router & legacy migration", () => {
     delete process.env.OPENROUTER_MODELS;
     delete process.env.OPENROUTER_MODEL;
     delete process.env.OPENROUTER_MAX_INPUT_CHARS;
+    delete process.env.OPENROUTER_TIMEOUT_MS;
     delete process.env.AI_MODEL;
     delete process.env.INGEST_AI_MODEL;
     delete process.env.OPENAI_API_KEY;
@@ -946,5 +949,215 @@ describe("Unified OpenRouter -> Gemini router & legacy migration", () => {
     ).toEqual(["custom/model-a", "custom/model-b"]);
 
     warnSpy.mockRestore();
+  });
+
+  it("configures OpenAI clients with maxRetries: 0 and bounded timeout across router and OpenRouter summarizer", async () => {
+    process.env.OPENROUTER_API_KEYS = "or-key-1";
+    mockOpenAI.__mockCreate.mockResolvedValueOnce(
+      makeCompletionResponse({
+        id: "bill-timeout-default",
+        summary: VALID_SUMMARY,
+        keyPoints: ["Default timeout check"],
+        impactAreas: ["Agencies"],
+        categories: ["infrastructure"],
+      })
+    );
+
+    await summarizeAndCategorizeItems(
+      [makeItem("bill-timeout-default")],
+      SAMPLE_CATEGORIES
+    );
+
+    expect(mockOpenAI.default).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: "or-key-1",
+        baseURL: "https://openrouter.ai/api/v1",
+        maxRetries: 0,
+        timeout: 60_000,
+      })
+    );
+
+    process.env.OPENROUTER_TIMEOUT_MS = "15000";
+    mockOpenAI.__mockCreate.mockResolvedValueOnce(
+      makeCompletionResponse(
+        `## Summary\n${VALID_SUMMARY}\n\n## Key Points\n- Timeout bound check\n\n## Impact Areas\n- Agencies\n\n## Confidence\n0.85`
+      )
+    );
+
+    await generateSummaryOpenRouter({
+      title: "Water Act",
+      fullText: "Full bill text",
+      summaryType: "STANDARD",
+    });
+
+    expect(mockOpenAI.default).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        apiKey: "or-key-1",
+        baseURL: "https://openrouter.ai/api/v1",
+        maxRetries: 0,
+        timeout: 15_000,
+      })
+    );
+  });
+
+  it("falls back to guarded Gemini batch mode on multi-item OpenRouter exhaustion, handles omitted items, and propagates FallbackCapReachedError", async () => {
+    // Subcase A: 3-item batch short-circuits on 402/401 to a single Gemini batch call
+    mockOpenAI.__mockCreate
+      .mockRejectedValueOnce(makeOpenRouterError(402, "No credits key 1"))
+      .mockRejectedValueOnce(makeOpenRouterError(401, "Invalid key 2"));
+
+    mockCallGeminiStructured.mockResolvedValueOnce({
+      data: {
+        items: [
+          {
+            id: "bill-b1",
+            summary: VALID_SUMMARY,
+            keyPoints: ["Batch Gemini point 1"],
+            impactAreas: ["Municipalities"],
+            categories: ["infrastructure", "nonexistent-slug"],
+            confidence: 0.9,
+          },
+          {
+            id: "bill-b3",
+            summary: VALID_SUMMARY,
+            keyPoints: ["Batch Gemini point 3"],
+            impactAreas: ["Clinics"],
+            categories: ["healthcare"],
+            confidence: null,
+          },
+        ],
+      },
+      model: GEMINI_FALLBACK_MODEL,
+    });
+
+    const batchItems = [
+      makeItem("bill-b1"),
+      makeItem("bill-b2"),
+      makeItem("bill-b3"),
+    ];
+    const outcomes = await summarizeAndCategorizeItems(
+      batchItems,
+      SAMPLE_CATEGORIES
+    );
+
+    expect(mockOpenAI.__mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockCallGeminiStructured).toHaveBeenCalledTimes(1);
+    expect(mockCallGeminiStructured).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schema: SummaryAndCategoryBatchSchema,
+        itemIds: ["bill-b1", "bill-b2", "bill-b3"],
+      })
+    );
+    expect(outcomes).toEqual([
+      {
+        id: "bill-b1",
+        ok: true,
+        summary: VALID_SUMMARY,
+        keyPoints: ["Batch Gemini point 1"],
+        impactAreas: ["Municipalities"],
+        categories: ["infrastructure"],
+        confidence: 0.9,
+        aiModel: "gemini-3.8-flash",
+      },
+      {
+        id: "bill-b2",
+        ok: false,
+        error: "Gemini batch response omitted item",
+      },
+      {
+        id: "bill-b3",
+        ok: true,
+        summary: VALID_SUMMARY,
+        keyPoints: ["Batch Gemini point 3"],
+        impactAreas: ["Clinics"],
+        categories: ["healthcare"],
+        confidence: null,
+        aiModel: "gemini-3.8-flash",
+      },
+    ]);
+
+    // Subcase B: Multi-item batch propagates FallbackCapReachedError when Gemini cap is hit
+    resetOpenRouterRouterStateForTests();
+    mockOpenAI.__mockCreate.mockClear();
+    mockCallGeminiStructured.mockClear();
+    process.env.OPENROUTER_API_KEYS = "or-key-1";
+
+    mockOpenAI.__mockCreate
+      .mockRejectedValueOnce(makeOpenRouterError(429, "Rate limit m1"))
+      .mockRejectedValueOnce(makeOpenRouterError(429, "Rate limit m2"))
+      .mockRejectedValueOnce(makeOpenRouterError(429, "Rate limit m3"));
+    mockCallGeminiStructured.mockRejectedValueOnce(
+      new FallbackCapReachedError("Daily cap reached", {
+        reason: "daily-cap-reached",
+        used: 20,
+        limit: 20,
+      })
+    );
+
+    await expect(
+      summarizeAndCategorizeItems(
+        [makeItem("bill-cap-1"), makeItem("bill-cap-2")],
+        SAMPLE_CATEGORIES
+      )
+    ).rejects.toBeInstanceOf(FallbackCapReachedError);
+    expect(mockOpenAI.__mockCreate).toHaveBeenCalledTimes(3);
+    expect(mockCallGeminiStructured).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to guarded Gemini in categorizeLegislationItem when OpenRouter fails and propagates FallbackCapReachedError", async () => {
+    // Subcase A: OpenRouter all keys 402/401 -> Gemini CategorizeOnlySchema succeeds
+    mockOpenAI.__mockCreate
+      .mockRejectedValueOnce(makeOpenRouterError(402, "No credits 1"))
+      .mockRejectedValueOnce(makeOpenRouterError(401, "Bad key 2"));
+
+    mockCallGeminiStructured.mockResolvedValueOnce({
+      data: {
+        categories: ["healthcare", "invalid-slug", "infrastructure"],
+      },
+      model: GEMINI_FALLBACK_MODEL,
+    });
+
+    const result = await categorizeLegislationItem({
+      title: "Rural Hospital & Water Infrastructure Act",
+      summary: VALID_SUMMARY,
+      categories: SAMPLE_CATEGORIES,
+    });
+
+    expect(mockOpenAI.__mockCreate).toHaveBeenCalledTimes(2);
+    expect(mockCallGeminiStructured).toHaveBeenCalledTimes(1);
+    expect(mockCallGeminiStructured).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schema: CategorizeOnlySchema,
+      })
+    );
+    expect(result).toEqual({
+      categories: ["healthcare", "infrastructure"],
+      aiModel: "gemini-3.8-flash",
+    });
+
+    // Subcase B: Propagates FallbackCapReachedError when Gemini cap is reached
+    resetOpenRouterRouterStateForTests();
+    mockOpenAI.__mockCreate.mockClear();
+    mockCallGeminiStructured.mockClear();
+    process.env.OPENROUTER_API_KEYS = "or-key-1";
+
+    mockOpenAI.__mockCreate.mockRejectedValueOnce(
+      makeOpenRouterError(402, "No credits")
+    );
+    mockCallGeminiStructured.mockRejectedValueOnce(
+      new FallbackCapReachedError("Daily cap reached", {
+        reason: "daily-cap-reached",
+        used: 20,
+        limit: 20,
+      })
+    );
+
+    await expect(
+      categorizeLegislationItem({
+        title: "Clean Water Act",
+        summary: VALID_SUMMARY,
+        categories: SAMPLE_CATEGORIES,
+      })
+    ).rejects.toBeInstanceOf(FallbackCapReachedError);
   });
 });

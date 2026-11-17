@@ -19,6 +19,7 @@ import {
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_OPENROUTER_MAX_INPUT_CHARS = 120_000;
 const DEFAULT_GEMINI_MAX_INPUT_CHARS = 400_000;
+const DEFAULT_OPENROUTER_TIMEOUT_MS = 60_000;
 
 const KEY_AUTH_DISABLE_TTL_MS = 60 * 60 * 1000; // 1 hour for 401
 const KEY_CREDIT_DISABLE_TTL_MS = 15 * 60 * 1000; // 15 min for 402
@@ -133,6 +134,15 @@ function getGeminiMaxInputChars(
   return parsePositiveInt(
     envObj.GEMINI_MAX_INPUT_CHARS,
     DEFAULT_GEMINI_MAX_INPUT_CHARS
+  );
+}
+
+function getOpenRouterTimeoutMs(
+  envObj: Partial<NodeJS.ProcessEnv> = process.env
+): number {
+  return parsePositiveInt(
+    envObj.OPENROUTER_TIMEOUT_MS,
+    DEFAULT_OPENROUTER_TIMEOUT_MS
   );
 }
 
@@ -339,6 +349,8 @@ function createOpenRouterClient(apiKey: string): OpenAI {
   return new OpenAI({
     apiKey,
     baseURL: OPENROUTER_BASE_URL,
+    maxRetries: 0,
+    timeout: getOpenRouterTimeoutMs(),
     defaultHeaders: {
       "HTTP-Referer": process.env.SITE_URL || "https://legistrack.vercel.app",
       "X-Title": "Legislation Tracker - AI Processing",

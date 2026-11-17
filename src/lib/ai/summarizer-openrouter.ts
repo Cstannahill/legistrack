@@ -68,6 +68,18 @@ export const OPENROUTER_MODELS = {
 export type OpenRouterModel = keyof typeof OPENROUTER_MODELS;
 
 const PROVIDER_NAMES = new Set(["openrouter", "openai", "anthropic"]);
+const DEFAULT_OPENROUTER_TIMEOUT_MS = 60_000;
+
+function getOpenRouterTimeoutMs(
+  envObj: Partial<NodeJS.ProcessEnv> = process.env
+): number {
+  const raw = envObj.OPENROUTER_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_OPENROUTER_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_OPENROUTER_TIMEOUT_MS;
+}
 
 function matchModelEntry(
   model?: string | null
@@ -193,6 +205,8 @@ export async function generateSummaryOpenRouter({
       const openrouter = new OpenAI({
         apiKey,
         baseURL: "https://openrouter.ai/api/v1",
+        maxRetries: 0,
+        timeout: getOpenRouterTimeoutMs(),
       });
 
       const completion = await openrouter.chat.completions.create(

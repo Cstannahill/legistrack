@@ -97,6 +97,8 @@ async function callOpenRouterWithKey(
   const openrouter = new OpenAI({
     apiKey,
     baseURL: "https://openrouter.ai/api/v1",
+    maxRetries: 0,
+    timeout: 60_000,
   });
 
   try {
