@@ -2,10 +2,9 @@ module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
   testMatch: ["<rootDir>/tests/**/*.test.ts"],
-  verbose: true,
-  globals: {
-    "ts-jest": {
-      isolatedModules: true,
-    },
+  testPathIgnorePatterns: ["/node_modules/", "/.next/", "/lambda/"],
+  moduleNameMapper: {
+    "^@/(.*)$": "<rootDir>/src/$1",
   },
+  verbose: true,
 };
