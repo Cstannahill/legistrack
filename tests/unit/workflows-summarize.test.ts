@@ -1129,22 +1129,44 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
       expect(mockDb.deadLetter.create).not.toHaveBeenCalled();
     });
 
-    it("keeps summarized, categorized, and persisted counters consistent via transaction when connectItemCategories fails after summary.create", async () => {
-      mockDb.summary.create.mockResolvedValueOnce({ id: "sum-tx-rollback" });
-      mockDb.bill.update.mockRejectedValueOnce(
-        new Error("Category relation constraint error")
+    it("scopes summary.create and category updates to the tx client inside $transaction and keeps counters consistent on partial failure", async () => {
+      const mockTx = {
+        summary: { create: jest.fn() },
+        bill: { update: jest.fn() },
+        executiveOrder: { update: jest.fn() },
+      };
+
+      mockDb.$transaction.mockImplementation(
+        async (callback: (tx: typeof mockTx) => Promise<unknown>) =>
+          callback(mockTx)
       );
+
+      mockTx.summary.create
+        .mockResolvedValueOnce({ id: "sum-tx-committed" })
+        .mockResolvedValueOnce({ id: "sum-tx-rollback" });
+      mockTx.bill.update
+        .mockResolvedValueOnce({ id: "bill-tx-ok" })
+        .mockRejectedValueOnce(new Error("Category relation constraint error"));
 
       const batch: SummarizeWorkBatch = {
         categories: DYNAMIC_CATEGORIES,
-        billCount: 1,
+        billCount: 2,
         executiveOrderCount: 0,
         items: [
+          {
+            id: "bill-tx-ok",
+            kind: "bill",
+            title: "Transaction Scoped Success Bill",
+            fullText: "Bill text ok ".repeat(20),
+            hasStandardSummary: false,
+            standardSummaryText: null,
+            hasCategories: false,
+          },
           {
             id: "bill-tx-partial-fail",
             kind: "bill",
             title: "Partial Persistence Failure Bill",
-            fullText: "Bill text ".repeat(20),
+            fullText: "Bill text fail ".repeat(20),
             hasStandardSummary: false,
             standardSummaryText: null,
             hasCategories: false,
@@ -1153,6 +1175,16 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
       };
 
       mockSummarizeAndCategorizeItems.mockResolvedValueOnce([
+        {
+          id: "bill-tx-ok",
+          ok: true,
+          summary: VALID_SUMMARY,
+          keyPoints: ["Commits cleanly on tx."],
+          impactAreas: ["Cities"],
+          categories: ["infrastructure"],
+          confidence: 0.91,
+          aiModel: "deepseek/deepseek-v4.1-flash-1017",
+        },
         {
           id: "bill-tx-partial-fail",
           ok: true,
@@ -1167,12 +1199,17 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
 
       const outcome = await processSummaryBatchStep(batch);
 
-      expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockDb.$transaction).toHaveBeenCalledTimes(2);
+      expect(mockTx.summary.create).toHaveBeenCalledTimes(2);
+      expect(mockTx.bill.update).toHaveBeenCalledTimes(2);
+      expect(mockDb.summary.create).not.toHaveBeenCalled();
+      expect(mockDb.bill.update).not.toHaveBeenCalled();
+
       expect(outcome).toEqual({
-        attempted: 1,
-        persisted: 0,
-        summarized: 0,
-        categorized: 0,
+        attempted: 2,
+        persisted: 1,
+        summarized: 1,
+        categorized: 1,
         failed: 1,
         deadLettered: 1,
         errors: [
@@ -1184,6 +1221,7 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
           },
         ],
       });
+      expect(mockDb.deadLetter.create).toHaveBeenCalledTimes(1);
       expect(mockDb.deadLetter.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           billId: "bill-tx-partial-fail",

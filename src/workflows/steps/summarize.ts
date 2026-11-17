@@ -442,51 +442,26 @@ async function persistCombinedOutcome(
     : resolveCategoryConnectIds(parsed.data.categories, categories);
 
   let appliedCategories = false;
-  if (typeof db.$transaction === "function") {
-    try {
-      appliedCategories = await db.$transaction(async (tx) => {
-        await createStandardSummaryRow(tx, item, summaryData);
-        if (connectIds.length > 0) {
-          await connectItemCategories(item, connectIds, tx);
-          return true;
-        }
-        return false;
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await recordItemFailure(item, message, outcomeCounters);
-      return;
-    }
-
-    outcomeCounters.summarized += 1;
-    if (appliedCategories) {
-      outcomeCounters.categorized += 1;
-    }
-    outcomeCounters.persisted += 1;
-  } else {
-    try {
-      await createStandardSummaryRow(db, item, summaryData);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await recordItemFailure(item, message, outcomeCounters);
-      return;
-    }
-
-    outcomeCounters.summarized += 1;
-    outcomeCounters.persisted += 1;
-
-    if (connectIds.length > 0) {
-      try {
-        await connectItemCategories(item, connectIds, db);
-        outcomeCounters.categorized += 1;
-        appliedCategories = true;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        await recordItemFailure(item, message, outcomeCounters);
-        return;
+  try {
+    appliedCategories = await db.$transaction(async (tx) => {
+      await createStandardSummaryRow(tx, item, summaryData);
+      if (connectIds.length > 0) {
+        await connectItemCategories(item, connectIds, tx);
+        return true;
       }
-    }
+      return false;
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await recordItemFailure(item, message, outcomeCounters);
+    return;
   }
+
+  outcomeCounters.summarized += 1;
+  if (appliedCategories) {
+    outcomeCounters.categorized += 1;
+  }
+  outcomeCounters.persisted += 1;
 
   if (appliedCategories || item.hasCategories) {
     await markDeadLetterProcessedSafely(item);
