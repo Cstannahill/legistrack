@@ -65,16 +65,17 @@ const STATUS_MAPPINGS: Array<{ match: RegExp; status: BillStatus }> = [
     match: /presented to president|sent to president/i,
     status: "PRESENTED_TO_PRESIDENT",
   },
+  { match: /\b(?:failed|rejected|not agreed to)\b/i, status: "FAILED" },
   {
     match: /resolving differences|conference/i,
     status: "RESOLVING_DIFFERENCES",
   },
   {
-    match: /passed senate|senate passed|agreed to in senate/i,
+    match: /passed senate|senate passed|(?<!\bnot\s+)agreed to in senate/i,
     status: "PASSED_SENATE",
   },
   {
-    match: /passed house|house passed|agreed to in house/i,
+    match: /passed house|house passed|(?<!\bnot\s+)agreed to in house/i,
     status: "PASSED_HOUSE",
   },
   {
@@ -82,7 +83,6 @@ const STATUS_MAPPINGS: Array<{ match: RegExp; status: BillStatus }> = [
     status: "REPORTED_BY_COMMITTEE",
   },
   { match: /referred to|committee/i, status: "REFERRED_TO_COMMITTEE" },
-  { match: /failed|rejected|not agreed to/i, status: "FAILED" },
 ];
 
 type BillPreservableField =

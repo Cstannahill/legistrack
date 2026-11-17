@@ -217,6 +217,86 @@ describe("Ingestion Prisma persistence & text-backfill services", () => {
       ).toBe("REFERRED_TO_COMMITTEE");
 
       expect(
+        resolveBillStatus(
+          { latestAction: { text: "Not agreed to in House" } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("FAILED");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Not agreed to in Senate" } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("FAILED");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Failed in committee" } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("FAILED");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Rejected in committee" } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("FAILED");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Passed House" } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("PASSED_HOUSE");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Agreed to in House" } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("PASSED_HOUSE");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Agreed to in Senate" } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("PASSED_SENATE");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Passed House; referred to the Committee on Judiciary." } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("PASSED_HOUSE");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Reported by Committee on Energy." } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("REPORTED_BY_COMMITTEE");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Vetoed by President." } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("VETOED");
+
+      expect(
         resolveBillStatus({}, [], fallbackDate)
       ).toEqual({
         status: "INTRODUCED",
