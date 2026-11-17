@@ -163,6 +163,8 @@ function getDeadLetterTargetWhere(item: SummarizeWorkItem): {
     : { executiveOrderId: item.id };
 }
 
+type DbWriteClient = Prisma.TransactionClient;
+
 async function findExistingStandardSummary(
   item: SummarizeWorkItem
 ): Promise<{ id: string; content: string } | null> {
@@ -181,16 +183,43 @@ async function findExistingStandardSummary(
   return existing ?? null;
 }
 
+async function hasLiveCategories(item: SummarizeWorkItem): Promise<boolean> {
+  if (item.kind === "bill") {
+    if (typeof db.bill?.count !== "function") {
+      return item.hasCategories;
+    }
+    const count = await db.bill.count({
+      where: {
+        id: item.id,
+        categories: { some: {} },
+      },
+    });
+    return typeof count === "number" ? count > 0 : item.hasCategories;
+  }
+
+  if (typeof db.executiveOrder?.count !== "function") {
+    return item.hasCategories;
+  }
+  const count = await db.executiveOrder.count({
+    where: {
+      id: item.id,
+      categories: { some: {} },
+    },
+  });
+  return typeof count === "number" ? count > 0 : item.hasCategories;
+}
+
 async function connectItemCategories(
   item: SummarizeWorkItem,
-  categoryConnectIds: Array<{ id: string }>
+  categoryConnectIds: Array<{ id: string }>,
+  client: DbWriteClient = db
 ): Promise<void> {
   if (categoryConnectIds.length === 0) {
     return;
   }
 
   if (item.kind === "bill") {
-    await db.bill.update({
+    await client.bill.update({
       where: { id: item.id },
       data: {
         categories: {
@@ -201,13 +230,40 @@ async function connectItemCategories(
     return;
   }
 
-  await db.executiveOrder.update({
+  await client.executiveOrder.update({
     where: { id: item.id },
     data: {
       categories: {
         connect: categoryConnectIds,
       },
     },
+  });
+}
+
+async function createStandardSummaryRow(
+  client: DbWriteClient,
+  item: SummarizeWorkItem,
+  summaryData: {
+    content: string;
+    keyPoints: string[];
+    impactAreas: string[];
+    aiModel: string;
+    confidence: number | null;
+  }
+): Promise<void> {
+  await client.summary.create({
+    data: {
+      billId: item.kind === "bill" ? item.id : null,
+      executiveOrderId: item.kind === "executiveOrder" ? item.id : null,
+      summaryType: "STANDARD",
+      content: summaryData.content,
+      keyPoints: summaryData.keyPoints,
+      impactAreas: summaryData.impactAreas,
+      aiModel: summaryData.aiModel,
+      confidence: summaryData.confidence,
+      generatedAt: new Date(),
+    },
+    select: { id: true },
   });
 }
 
@@ -291,6 +347,19 @@ async function markDeadLetterProcessedIfAny(
   });
 }
 
+async function markDeadLetterProcessedSafely(
+  item: SummarizeWorkItem
+): Promise<void> {
+  try {
+    await markDeadLetterProcessedIfAny(item);
+  } catch (err) {
+    console.warn(
+      `[summarize] Failed to mark DeadLetter processed for ${item.kind} ${item.id}:`,
+      err
+    );
+  }
+}
+
 async function recordItemFailure(
   item: SummarizeWorkItem,
   errorMessage: string,
@@ -361,44 +430,66 @@ async function persistCombinedOutcome(
     return;
   }
 
-  try {
-    await db.summary.create({
-      data: {
-        billId: item.kind === "bill" ? item.id : null,
-        executiveOrderId: item.kind === "executiveOrder" ? item.id : null,
-        summaryType: "STANDARD",
-        content: parsed.data.summary,
-        keyPoints: parsed.data.keyPoints,
-        impactAreas: parsed.data.impactAreas,
-        aiModel: llmOutcome.aiModel,
-        confidence: parsed.data.confidence ?? null,
-        generatedAt: new Date(),
-      },
-      select: { id: true },
-    });
+  const summaryData = {
+    content: parsed.data.summary,
+    keyPoints: parsed.data.keyPoints,
+    impactAreas: parsed.data.impactAreas,
+    aiModel: llmOutcome.aiModel,
+    confidence: parsed.data.confidence ?? null,
+  };
+  const connectIds = item.hasCategories
+    ? []
+    : resolveCategoryConnectIds(parsed.data.categories, categories);
+
+  let appliedCategories = false;
+  if (typeof db.$transaction === "function") {
+    try {
+      appliedCategories = await db.$transaction(async (tx) => {
+        await createStandardSummaryRow(tx, item, summaryData);
+        if (connectIds.length > 0) {
+          await connectItemCategories(item, connectIds, tx);
+          return true;
+        }
+        return false;
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await recordItemFailure(item, message, outcomeCounters);
+      return;
+    }
 
     outcomeCounters.summarized += 1;
+    if (appliedCategories) {
+      outcomeCounters.categorized += 1;
+    }
+    outcomeCounters.persisted += 1;
+  } else {
+    try {
+      await createStandardSummaryRow(db, item, summaryData);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await recordItemFailure(item, message, outcomeCounters);
+      return;
+    }
 
-    let appliedCategories = false;
-    if (!item.hasCategories) {
-      const connectIds = resolveCategoryConnectIds(
-        parsed.data.categories,
-        categories
-      );
-      if (connectIds.length > 0) {
-        await connectItemCategories(item, connectIds);
+    outcomeCounters.summarized += 1;
+    outcomeCounters.persisted += 1;
+
+    if (connectIds.length > 0) {
+      try {
+        await connectItemCategories(item, connectIds, db);
         outcomeCounters.categorized += 1;
         appliedCategories = true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await recordItemFailure(item, message, outcomeCounters);
+        return;
       }
     }
+  }
 
-    outcomeCounters.persisted += 1;
-    if (appliedCategories || item.hasCategories) {
-      await markDeadLetterProcessedIfAny(item);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await recordItemFailure(item, message, outcomeCounters);
+  if (appliedCategories || item.hasCategories) {
+    await markDeadLetterProcessedSafely(item);
   }
 }
 
@@ -533,13 +624,15 @@ async function processCategoriesOnlyItem(
 
   try {
     await connectItemCategories(item, connectIds);
-    outcomeCounters.categorized += 1;
-    outcomeCounters.persisted += 1;
-    await markDeadLetterProcessedIfAny(item);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await recordItemFailure(item, message, outcomeCounters);
+    return;
   }
+
+  outcomeCounters.categorized += 1;
+  outcomeCounters.persisted += 1;
+  await markDeadLetterProcessedSafely(item);
 }
 
 function extractDistinctIds<T>(
@@ -740,23 +833,40 @@ export async function processSummaryBatchStep(
   for (const item of batch.items) {
     if (!item.hasStandardSummary) {
       // Idempotency guard across step retries after RetryableError
-      const existingSummary = await findExistingStandardSummary(item);
+      const [existingSummary, liveHasCategories] = await Promise.all([
+        findExistingStandardSummary(item),
+        item.hasCategories ? Promise.resolve(true) : hasLiveCategories(item),
+      ]);
+
       if (existingSummary) {
-        if (!item.hasCategories) {
+        if (liveHasCategories) {
+          outcomeCounters.persisted += 1;
+          await markDeadLetterProcessedSafely(item);
+        } else {
           categoriesOnlyItems.push({
             ...item,
             hasStandardSummary: true,
             standardSummaryText: existingSummary.content,
+            hasCategories: false,
           });
         }
         continue;
       }
 
-      needsSummaryItems.push(item);
+      needsSummaryItems.push({
+        ...item,
+        hasCategories: liveHasCategories,
+      });
       continue;
     }
 
     if (!item.hasCategories) {
+      const liveHasCategories = await hasLiveCategories(item);
+      if (liveHasCategories) {
+        outcomeCounters.persisted += 1;
+        await markDeadLetterProcessedSafely(item);
+        continue;
+      }
       categoriesOnlyItems.push(item);
     }
   }

@@ -54,15 +54,18 @@ jest.mock("@/lib/llm/router", () => ({
 
 jest.mock("@/lib/db", () => ({
   db: {
+    $transaction: jest.fn(),
     category: {
       findMany: jest.fn(),
     },
     bill: {
       findMany: jest.fn(),
+      count: jest.fn(),
       update: jest.fn(),
     },
     executiveOrder: {
       findMany: jest.fn(),
+      count: jest.fn(),
       update: jest.fn(),
     },
     summary: {
@@ -83,9 +86,10 @@ jest.mock("@/lib/db", () => ({
 }));
 
 interface MockDb {
+  $transaction: jest.Mock;
   category: { findMany: jest.Mock };
-  bill: { findMany: jest.Mock; update: jest.Mock };
-  executiveOrder: { findMany: jest.Mock; update: jest.Mock };
+  bill: { findMany: jest.Mock; count: jest.Mock; update: jest.Mock };
+  executiveOrder: { findMany: jest.Mock; count: jest.Mock; update: jest.Mock };
   summary: { findFirst: jest.Mock; create: jest.Mock };
   deadLetter: {
     findMany: jest.Mock;
@@ -145,6 +149,9 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
     jest.spyOn(console, "warn").mockImplementation(() => {});
     jest.spyOn(console, "error").mockImplementation(() => {});
 
+    mockDb.$transaction.mockImplementation(
+      async (callback: (tx: MockDb) => Promise<unknown>) => callback(mockDb)
+    );
     mockDb.category.findMany.mockResolvedValue(DYNAMIC_CATEGORIES);
     mockDb.deadLetter.findMany.mockResolvedValue([]);
     mockDb.deadLetter.findFirst.mockResolvedValue(null);
@@ -152,7 +159,9 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
     mockDb.deadLetter.update.mockResolvedValue({ id: "dl-updated" });
     mockDb.summary.findFirst.mockResolvedValue(null);
     mockDb.summary.create.mockResolvedValue({ id: "sum-created" });
+    mockDb.bill.count.mockResolvedValue(0);
     mockDb.bill.update.mockResolvedValue({ id: "bill-updated" });
+    mockDb.executiveOrder.count.mockResolvedValue(0);
     mockDb.executiveOrder.update.mockResolvedValue({ id: "eo-updated" });
     mockDb.jobRun.create.mockResolvedValue({ id: "jr-1" });
     mockDb.jobRun.update.mockResolvedValue({ id: "jr-1" });
@@ -985,6 +994,203 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
       expect(mockDb.executiveOrder.update).toHaveBeenCalledWith({
         where: { id: "eo-cat-good" },
         data: { categories: { connect: [{ id: "dyn-cat-def" }] } },
+      });
+    });
+
+    it("detects live DB categories on retry when both Summary and categories already exist, skips LLM/DB writes, marks DeadLetter processed, and preserves persisted count", async () => {
+      // Bill started with stale snapshot { hasStandardSummary: false, hasCategories: false }
+      // and EO started with { hasStandardSummary: true, hasCategories: false },
+      // both already persisted during Attempt 1 before a later RetryableError.
+      mockDb.summary.findFirst.mockResolvedValueOnce({
+        id: "existing-sum-retry",
+        content: VALID_SUMMARY,
+      });
+      mockDb.bill.count.mockResolvedValueOnce(2);
+      mockDb.executiveOrder.count.mockResolvedValueOnce(1);
+      mockDb.deadLetter.findFirst
+        .mockResolvedValueOnce({ id: "dl-bill-retry-done", attempts: 1 })
+        .mockResolvedValueOnce({ id: "dl-eo-retry-done", attempts: 1 });
+
+      const batch: SummarizeWorkBatch = {
+        categories: DYNAMIC_CATEGORIES,
+        billCount: 1,
+        executiveOrderCount: 1,
+        items: [
+          {
+            id: "bill-retry-both",
+            kind: "bill",
+            title: "Already Persisted Both Bill",
+            fullText: "Full bill text ".repeat(20),
+            hasStandardSummary: false,
+            standardSummaryText: null,
+            hasCategories: false,
+          },
+          {
+            id: "eo-retry-cats",
+            kind: "executiveOrder",
+            title: "Already Persisted Categories EO",
+            fullText: "Full EO text ".repeat(20),
+            hasStandardSummary: true,
+            standardSummaryText: VALID_SUMMARY,
+            hasCategories: false,
+          },
+        ],
+      };
+
+      const outcome = await processSummaryBatchStep(batch);
+
+      expect(mockSummarizeAndCategorizeItems).not.toHaveBeenCalled();
+      expect(mockCategorizeLegislationItem).not.toHaveBeenCalled();
+      expect(mockDb.summary.create).not.toHaveBeenCalled();
+      expect(mockDb.bill.update).not.toHaveBeenCalled();
+      expect(mockDb.executiveOrder.update).not.toHaveBeenCalled();
+      expect(mockDb.deadLetter.update).toHaveBeenCalledTimes(2);
+      expect(mockDb.deadLetter.update).toHaveBeenNthCalledWith(1, {
+        where: { id: "dl-bill-retry-done" },
+        data: { processed: true, processedAt: expect.any(Date) },
+      });
+      expect(mockDb.deadLetter.update).toHaveBeenNthCalledWith(2, {
+        where: { id: "dl-eo-retry-done" },
+        data: { processed: true, processedAt: expect.any(Date) },
+      });
+      expect(outcome).toEqual({
+        attempted: 2,
+        persisted: 2,
+        summarized: 0,
+        categorized: 0,
+        failed: 0,
+        deadLettered: 0,
+        errors: [],
+      });
+    });
+
+    it("isolates DeadLetter cleanup errors after persistence so persisted items are never double-counted as failed", async () => {
+      mockDb.deadLetter.findFirst
+        .mockResolvedValueOnce({ id: "dl-cleanup-fail-1", attempts: 1 })
+        .mockResolvedValueOnce({ id: "dl-cleanup-fail-2", attempts: 1 });
+      mockDb.deadLetter.update
+        .mockRejectedValueOnce(new Error("DeadLetter row lock timeout"))
+        .mockRejectedValueOnce(new Error("DeadLetter row lock timeout"));
+
+      const batch: SummarizeWorkBatch = {
+        categories: DYNAMIC_CATEGORIES,
+        billCount: 2,
+        executiveOrderCount: 0,
+        items: [
+          {
+            id: "bill-dl-cleanup-1",
+            kind: "bill",
+            title: "Combined Cleanup Error Bill",
+            fullText: "Bill text ".repeat(20),
+            hasStandardSummary: false,
+            standardSummaryText: null,
+            hasCategories: false,
+          },
+          {
+            id: "bill-dl-cleanup-2",
+            kind: "bill",
+            title: "Categories Cleanup Error Bill",
+            fullText: "Bill text ".repeat(20),
+            hasStandardSummary: true,
+            standardSummaryText: VALID_SUMMARY,
+            hasCategories: false,
+          },
+        ],
+      };
+
+      mockSummarizeAndCategorizeItems.mockResolvedValueOnce([
+        {
+          id: "bill-dl-cleanup-1",
+          ok: true,
+          summary: VALID_SUMMARY,
+          keyPoints: ["Modernizes municipal pipes."],
+          impactAreas: ["Cities"],
+          categories: ["infrastructure"],
+          confidence: 0.9,
+          aiModel: "deepseek/deepseek-v4.1-flash-1017",
+        },
+      ]);
+      mockCategorizeLegislationItem.mockResolvedValueOnce({
+        categories: ["healthcare"],
+        aiModel: "deepseek/deepseek-v4.1-flash-1017",
+      });
+
+      const outcome = await processSummaryBatchStep(batch);
+
+      expect(outcome).toEqual({
+        attempted: 2,
+        persisted: 2,
+        summarized: 1,
+        categorized: 2,
+        failed: 0,
+        deadLettered: 0,
+        errors: [],
+      });
+      expect(mockDb.deadLetter.create).not.toHaveBeenCalled();
+    });
+
+    it("keeps summarized, categorized, and persisted counters consistent via transaction when connectItemCategories fails after summary.create", async () => {
+      mockDb.summary.create.mockResolvedValueOnce({ id: "sum-tx-rollback" });
+      mockDb.bill.update.mockRejectedValueOnce(
+        new Error("Category relation constraint error")
+      );
+
+      const batch: SummarizeWorkBatch = {
+        categories: DYNAMIC_CATEGORIES,
+        billCount: 1,
+        executiveOrderCount: 0,
+        items: [
+          {
+            id: "bill-tx-partial-fail",
+            kind: "bill",
+            title: "Partial Persistence Failure Bill",
+            fullText: "Bill text ".repeat(20),
+            hasStandardSummary: false,
+            standardSummaryText: null,
+            hasCategories: false,
+          },
+        ],
+      };
+
+      mockSummarizeAndCategorizeItems.mockResolvedValueOnce([
+        {
+          id: "bill-tx-partial-fail",
+          ok: true,
+          summary: VALID_SUMMARY,
+          keyPoints: ["Expands water infrastructure grants."],
+          impactAreas: ["Towns"],
+          categories: ["infrastructure"],
+          confidence: 0.9,
+          aiModel: "deepseek/deepseek-v4.1-flash-1017",
+        },
+      ]);
+
+      const outcome = await processSummaryBatchStep(batch);
+
+      expect(mockDb.$transaction).toHaveBeenCalledTimes(1);
+      expect(outcome).toEqual({
+        attempted: 1,
+        persisted: 0,
+        summarized: 0,
+        categorized: 0,
+        failed: 1,
+        deadLettered: 1,
+        errors: [
+          {
+            id: "bill-tx-partial-fail",
+            kind: "bill",
+            error: "Category relation constraint error",
+            deadLetterAttempts: 1,
+          },
+        ],
+      });
+      expect(mockDb.deadLetter.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          billId: "bill-tx-partial-fail",
+          attempts: 1,
+          errorMessage: "Category relation constraint error",
+          processed: false,
+        }),
       });
     });
   });
