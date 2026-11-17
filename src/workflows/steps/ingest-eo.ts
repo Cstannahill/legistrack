@@ -12,6 +12,16 @@ import {
   hydrateExecutiveOrder,
   type FederalRegisterDocument,
 } from "@/lib/ingestion/federal-register-client";
+import {
+  isExplicitPermanentError,
+  isExplicitPermanentMessage,
+  isTransientOrSystemicError,
+  isTransientOrSystemicMessage,
+  runTextBackfillStep,
+  throwIfTotalNonPermanentChunkFailure,
+  toRetryableStepError,
+  type ItemFailureRecord,
+} from "@/workflows/steps/ingestion-helpers";
 import type {
   IngestChunkOutcome,
   IngestItemError,
@@ -168,17 +178,27 @@ async function countEosNeedingSummarization(
     return hydratedWithTextIds.length;
   }
 
-  return db.executiveOrder.count({
-    where: {
-      id: { in: changedEoIds },
-      fullText: { not: null },
-      NOT: { fullText: "" },
-      OR: [
-        { summaries: { none: { summaryType: "STANDARD" } } },
-        { categories: { none: {} } },
-      ],
-    },
-  });
+  try {
+    return await db.executiveOrder.count({
+      where: {
+        id: { in: changedEoIds },
+        fullText: { not: null },
+        NOT: { fullText: "" },
+        OR: [
+          { summaries: { none: { summaryType: "STANDARD" } } },
+          { categories: { none: {} } },
+        ],
+      },
+    });
+  } catch (error) {
+    if (isTransientOrSystemicError(error)) {
+      throw toRetryableStepError(
+        error,
+        "[ingest-eo] Transient DB failure checking summarization eligibility"
+      );
+    }
+    throw error;
+  }
 }
 
 /**
@@ -226,14 +246,22 @@ export async function fetchExecutiveOrderListStep(
   const items: EoListTarget[] = [];
 
   for (let page = 1; page <= maxPages; page++) {
-    const response = await fetchExecutiveOrdersPage({
-      page,
-      perPage,
-      conditions: {
-        publicationDate: dateCondition,
-        presidentialDocumentType: documentTypes,
-      },
-    });
+    let response;
+    try {
+      response = await fetchExecutiveOrdersPage({
+        page,
+        perPage,
+        conditions: {
+          publicationDate: dateCondition,
+          presidentialDocumentType: documentTypes,
+        },
+      });
+    } catch (error) {
+      if (isTransientOrSystemicError(error)) {
+        throw toRetryableStepError(error);
+      }
+      throw error;
+    }
 
     const documents = response.results ?? [];
     if (documents.length === 0) {
@@ -271,7 +299,8 @@ export async function fetchExecutiveOrderListStep(
 /**
  * Hydrates and persists a bounded chunk of executive orders via Prisma, returning
  * counts and how many changed orders have `fullText` needing summarization or
- * categorization.
+ * categorization. Throws `RetryableError` on transient upstream/DB outages or
+ * when an entire chunk fails with non-permanent errors.
  */
 export async function ingestEoChunkStep(
   items: EoListTarget[],
@@ -299,6 +328,7 @@ export async function ingestEoChunkStep(
   const changedEoIds: string[] = [];
   const hydratedWithTextIds: string[] = [];
   const errors: IngestItemError[] = [];
+  const failures: ItemFailureRecord[] = [];
 
   for (const doc of items) {
     const identifier = buildExecutiveOrderIdentifier(doc);
@@ -331,16 +361,32 @@ export async function ingestEoChunkStep(
           break;
         }
         case "failed": {
+          const message =
+            persisted.message ?? "Failed to persist executive order";
+          if (isTransientOrSystemicMessage(message)) {
+            throw toRetryableStepError(
+              `${persisted.identifier}: ${message}`,
+              "[ingest-eo] Transient DB persistence failure"
+            );
+          }
           failed += 1;
-          pushBoundedError(
-            errors,
-            persisted.identifier,
-            persisted.message ?? "Failed to persist executive order"
-          );
+          pushBoundedError(errors, persisted.identifier, message);
+          failures.push({
+            identifier: persisted.identifier,
+            message,
+            permanent: isExplicitPermanentMessage(message),
+          });
           break;
         }
       }
     } catch (error) {
+      if (isTransientOrSystemicError(error)) {
+        throw toRetryableStepError(
+          error,
+          `[ingest-eo] Transient failure ingesting ${identifier}`
+        );
+      }
+
       failed += 1;
       const message = error instanceof Error ? error.message : String(error);
       console.error("[ingest-eo] Failed to ingest executive order", {
@@ -348,8 +394,20 @@ export async function ingestEoChunkStep(
         error: message,
       });
       pushBoundedError(errors, identifier, message);
+      failures.push({
+        identifier,
+        message,
+        permanent: isExplicitPermanentError(error),
+      });
     }
   }
+
+  throwIfTotalNonPermanentChunkFailure(
+    items.length,
+    created + updated + skipped,
+    failures,
+    "[ingest-eo] Entire executive order chunk failed"
+  );
 
   const needsSummarizationCount = await countEosNeedingSummarization(
     changedEoIds,
@@ -369,7 +427,8 @@ export async function ingestEoChunkStep(
 
 /**
  * Backfills `fullText` and `fullTextUrl` for executive orders currently missing
- * `fullText`.
+ * `fullText`, throwing `RetryableError` on transient upstream/DB outages or
+ * 100% non-permanent batch failures.
  */
 export async function backfillEoTextsStep(
   batchSize?: number
@@ -384,5 +443,9 @@ export async function backfillEoTextsStep(
           DEFAULT_EO_TEXT_BATCH_SIZE
         );
 
-  return backfillMissingEoTexts(limit);
+  return runTextBackfillStep(
+    limit,
+    "[update-texts:eo] Transient backfill failure",
+    (resolvedLimit, logger) => backfillMissingEoTexts(resolvedLimit, { logger })
+  );
 }

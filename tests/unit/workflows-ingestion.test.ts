@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { revalidatePath } from "next/cache";
+import { RetryableError } from "workflow";
 import { start } from "workflow/api";
 import { CongressClient } from "@/lib/ingestion/congress-client";
 import {
@@ -22,9 +23,25 @@ import * as ingestLegislationSteps from "@/workflows/steps/ingest-legislation";
 import { summarizeLegislationWorkflow } from "@/workflows/summarize-legislation";
 import { updateTextsWorkflow } from "@/workflows/update-texts";
 
-jest.mock("workflow", () => ({
-  RetryableError: class MockRetryableError extends Error {},
-}));
+jest.mock("workflow", () => {
+  class MockRetryableError extends Error {
+    retryAfter: unknown;
+
+    constructor(message: string, options?: { retryAfter?: unknown }) {
+      super(message);
+      this.name = "RetryableError";
+      this.retryAfter = options?.retryAfter;
+    }
+
+    static is(value: unknown): value is MockRetryableError {
+      return value instanceof Error && value.name === "RetryableError";
+    }
+  }
+
+  return {
+    RetryableError: MockRetryableError,
+  };
+});
 
 jest.mock("workflow/api", () => ({
   start: jest.fn(),
@@ -229,7 +246,7 @@ describe("Durable ingestion & text-backfill workflows + steps", () => {
 
       mockHydrateBill.mockImplementation(async (bill: { congress: number; type: string; number: string; title: string }) => {
         if (bill.number === "25") {
-          throw new Error("Congress API timeout");
+          throw new Error("Congress API request failed (404 Not Found)");
         }
         return {
           bill: {
@@ -460,7 +477,9 @@ describe("Durable ingestion & text-backfill workflows + steps", () => {
       mockHydrateExecutiveOrder.mockImplementation(
         async ({ document }: { document: { document_number: string; title: string } }) => {
           if (document.document_number === "2026-00015") {
-            throw new Error("Federal Register detail failed");
+            throw new Error(
+              "Missing signing date for document 2026-00015"
+            );
           }
           return {
             documentNumber: document.document_number,
@@ -651,8 +670,14 @@ describe("Durable ingestion & text-backfill workflows + steps", () => {
         select: { id: true },
       });
 
-      expect(mockBackfillMissingBillTexts).toHaveBeenCalledWith(12);
-      expect(mockBackfillMissingEoTexts).toHaveBeenCalledWith(8);
+      expect(mockBackfillMissingBillTexts).toHaveBeenCalledWith(
+        12,
+        expect.objectContaining({ logger: expect.any(Object) })
+      );
+      expect(mockBackfillMissingEoTexts).toHaveBeenCalledWith(
+        8,
+        expect.objectContaining({ logger: expect.any(Object) })
+      );
       expect(mockRevalidatePath).toHaveBeenCalledWith("/");
       expect(mockRevalidatePath).toHaveBeenCalledWith("/bills");
       expect(mockStart).toHaveBeenCalledTimes(1);
@@ -709,8 +734,14 @@ describe("Durable ingestion & text-backfill workflows + steps", () => {
 
       const urlOnlySummary = await updateTextsWorkflow();
 
-      expect(mockBackfillMissingBillTexts).toHaveBeenCalledWith(7);
-      expect(mockBackfillMissingEoTexts).toHaveBeenCalledWith(6);
+      expect(mockBackfillMissingBillTexts).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ logger: expect.any(Object) })
+      );
+      expect(mockBackfillMissingEoTexts).toHaveBeenCalledWith(
+        6,
+        expect.objectContaining({ logger: expect.any(Object) })
+      );
       expect(mockRevalidatePath).toHaveBeenCalledTimes(2);
       expect(mockStart).not.toHaveBeenCalled();
       expect(urlOnlySummary.triggeredSummarization).toBe(false);
@@ -856,8 +887,14 @@ describe("Durable ingestion & text-backfill workflows + steps", () => {
       });
       await ingestLegislationSteps.backfillBillTextsStep(0);
       await ingestEoSteps.backfillEoTextsStep(0);
-      expect(mockBackfillMissingBillTexts).toHaveBeenCalledWith(0);
-      expect(mockBackfillMissingEoTexts).toHaveBeenCalledWith(0);
+      expect(mockBackfillMissingBillTexts).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ logger: expect.any(Object) })
+      );
+      expect(mockBackfillMissingEoTexts).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ logger: expect.any(Object) })
+      );
     });
 
     it("queries exact Prisma eligibility criteria for changed items and keeps JobRun COMPLETED if child start() throws", async () => {
@@ -917,6 +954,315 @@ describe("Durable ingestion & text-backfill workflows + steps", () => {
     });
   });
 
+  describe("Transient RetryableError handling & 100%-failure fail-closed JobRuns", () => {
+    it("throws RetryableError on transient HTTP 429/5xx/network/DB outages in ingestBillChunkStep while isolating permanent single-item failures", async () => {
+      // Transient HTTP 429 on second item throws RetryableError even after first item succeeded
+      mockHydrateBill
+        .mockResolvedValueOnce({
+          bill: { congress: 119, type: "HR", number: "1", title: "Bill 1" },
+          text: { content: "Full text" },
+          actions: [],
+          amendments: [],
+          cosponsors: [],
+        })
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Congress API request failed (429 Too Many Requests)"), {
+            status: 429,
+          })
+        );
+      mockPersistHydratedBillPrisma.mockResolvedValueOnce({
+        action: "created",
+        billId: "bill-1",
+        identifier: "119-HR-1",
+      });
+
+      await expect(
+        ingestLegislationSteps.ingestBillChunkStep([
+          { congress: 119, type: "HR", number: "1", title: "Bill 1" },
+          { congress: 119, type: "HR", number: "2", title: "Bill 2" },
+        ])
+      ).rejects.toMatchObject({
+        name: "RetryableError",
+        retryAfter: "2m",
+      });
+
+      // Transient DB failure returned from persistHydratedBillPrisma also raises RetryableError
+      mockHydrateBill.mockResolvedValueOnce({
+        bill: { congress: 119, type: "HR", number: "3", title: "Bill 3" },
+        text: { content: null },
+        actions: [],
+        amendments: [],
+        cosponsors: [],
+      });
+      mockPersistHydratedBillPrisma.mockResolvedValueOnce({
+        action: "failed",
+        identifier: "119-HR-3",
+        message: "P1001: Can't reach database server at localhost:5432",
+      });
+
+      await expect(
+        ingestLegislationSteps.ingestBillChunkStep([
+          { congress: 119, type: "HR", number: "3", title: "Bill 3" },
+        ])
+      ).rejects.toBeInstanceOf(RetryableError);
+
+      // 100% unclassified non-permanent failure across a non-empty chunk throws RetryableError
+      mockHydrateBill
+        .mockRejectedValueOnce(new Error("Unexpected upstream anomaly"))
+        .mockRejectedValueOnce(new Error("Unexpected upstream anomaly"));
+
+      await expect(
+        ingestLegislationSteps.ingestBillChunkStep([
+          { congress: 119, type: "HR", number: "4", title: "Bill 4" },
+          { congress: 119, type: "HR", number: "5", title: "Bill 5" },
+        ])
+      ).rejects.toBeInstanceOf(RetryableError);
+
+      // Mixed chunk with isolated permanent 404 completes without RetryableError
+      mockHydrateBill
+        .mockResolvedValueOnce({
+          bill: { congress: 119, type: "HR", number: "6", title: "Bill 6" },
+          text: { content: "Text 6" },
+          actions: [],
+          amendments: [],
+          cosponsors: [],
+        })
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Congress API request failed (404 Not Found)"), {
+            status: 404,
+          })
+        );
+      mockPersistHydratedBillPrisma.mockResolvedValueOnce({
+        action: "created",
+        billId: "bill-6",
+        identifier: "119-HR-6",
+      });
+      mockDb.bill.count.mockResolvedValueOnce(1);
+
+      const mixedOutcome = await ingestLegislationSteps.ingestBillChunkStep([
+        { congress: 119, type: "HR", number: "6", title: "Bill 6" },
+        { congress: 119, type: "HR", number: "503", title: "Bill 503" },
+      ]);
+      expect(mixedOutcome).toMatchObject({
+        processed: 2,
+        created: 1,
+        failed: 1,
+        needsSummarizationCount: 1,
+      });
+    });
+
+    it("throws RetryableError on transient HTTP/network/DB outages in ingestEoChunkStep while isolating permanent missing signing date", async () => {
+      mockHydrateExecutiveOrder.mockRejectedValueOnce(
+        new Error("fetch failed: ECONNRESET")
+      );
+
+      await expect(
+        ingestEoSteps.ingestEoChunkStep([makeEoDocument(1)])
+      ).rejects.toBeInstanceOf(RetryableError);
+
+      mockHydrateExecutiveOrder.mockResolvedValueOnce({
+        documentNumber: "2026-00002",
+        orderNumber: 14202,
+        executiveOrderType: "EXECUTIVE_ORDER",
+        title: "EO 2",
+        signingDate: new Date("2026-11-15T00:00:00Z"),
+        presidentName: "Donald J. Trump",
+      });
+      mockPersistExecutiveOrderPrisma.mockResolvedValueOnce({
+        action: "failed",
+        identifier: "14202-EO 2",
+        message: "Connection pool timeout",
+      });
+
+      await expect(
+        ingestEoSteps.ingestEoChunkStep([makeEoDocument(2)])
+      ).rejects.toBeInstanceOf(RetryableError);
+
+      // Mixed chunk with permanent missing signing date completes cleanly
+      mockHydrateExecutiveOrder
+        .mockResolvedValueOnce({
+          documentNumber: "2026-00003",
+          orderNumber: 14203,
+          executiveOrderType: "EXECUTIVE_ORDER",
+          title: "EO 3",
+          signingDate: new Date("2026-11-15T00:00:00Z"),
+          presidentName: "Donald J. Trump",
+          fullText: "Full EO text",
+        })
+        .mockRejectedValueOnce(
+          new Error("Missing signing date for document 2026-00004")
+        );
+      mockPersistExecutiveOrderPrisma.mockResolvedValueOnce({
+        action: "created",
+        identifier: "14203-EO 3",
+        executiveOrderId: "eo-id-3",
+      });
+      mockDb.executiveOrder.count.mockResolvedValueOnce(1);
+
+      const mixedOutcome = await ingestEoSteps.ingestEoChunkStep([
+        makeEoDocument(3),
+        makeEoDocument(4),
+      ]);
+      expect(mixedOutcome).toMatchObject({
+        processed: 2,
+        created: 1,
+        failed: 1,
+        needsSummarizationCount: 1,
+      });
+    });
+
+    it("throws RetryableError on transient backfill errors in backfillBillTextsStep and backfillEoTextsStep while returning permanent missing-text summaries", async () => {
+      mockBackfillMissingBillTexts.mockImplementationOnce(
+        async (_limit: number, opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }) => {
+          opts?.logger?.warn?.("Failed to backfill bill text", {
+            billId: "b-1",
+            error: "Congress API request failed (503 Service Unavailable): upstream down",
+          });
+          return {
+            processed: 2,
+            updated: 1,
+            urlOnly: 0,
+            failed: 1,
+            updatedIds: ["b-0"],
+          };
+        }
+      );
+
+      await expect(
+        ingestLegislationSteps.backfillBillTextsStep(5)
+      ).rejects.toBeInstanceOf(RetryableError);
+
+      mockBackfillMissingEoTexts.mockRejectedValueOnce(
+        new Error("Can't reach database server at pg.internal:5432")
+      );
+
+      await expect(
+        ingestEoSteps.backfillEoTextsStep(5)
+      ).rejects.toBeInstanceOf(RetryableError);
+
+      // Permanent "No bill text available yet" does NOT throw RetryableError
+      mockBackfillMissingBillTexts.mockImplementationOnce(
+        async (_limit: number, opts?: { logger?: { warn?: (m: string, meta?: Record<string, unknown>) => void } }) => {
+          opts?.logger?.warn?.("No bill text available yet", {
+            billId: "b-2",
+          });
+          return {
+            processed: 1,
+            updated: 0,
+            urlOnly: 0,
+            failed: 1,
+            updatedIds: [],
+          };
+        }
+      );
+
+      await expect(
+        ingestLegislationSteps.backfillBillTextsStep(5)
+      ).resolves.toEqual({
+        processed: 1,
+        updated: 0,
+        urlOnly: 0,
+        failed: 1,
+        updatedIds: [],
+      });
+    });
+
+    it("marks JobRun FAILED and rejects without calling completeJobRunStep when 100% of items fail in ingestLegislationWorkflow, ingestExecutiveOrdersWorkflow, or updateTextsWorkflow", async () => {
+      // 1. ingestLegislationWorkflow 100% permanent failure
+      mockFetchBillPage.mockResolvedValueOnce({
+        bills: [makeBillListItem(1), makeBillListItem(2)],
+        pagination: {},
+      });
+      mockHydrateBill.mockRejectedValue(
+        Object.assign(new Error("Congress API request failed (404 Not Found)"), {
+          status: 404,
+        })
+      );
+
+      await expect(
+        ingestLegislationWorkflow({ executionId: "fail-all-bills" })
+      ).rejects.toThrow(/All 2 bill\(s\) failed/);
+
+      expect(mockRevalidatePath).not.toHaveBeenCalled();
+      expect(mockStart).not.toHaveBeenCalled();
+      expect(mockDb.jobRun.update).toHaveBeenCalledTimes(1);
+      expect(mockDb.jobRun.update).toHaveBeenCalledWith({
+        where: { id: "jr-1" },
+        data: {
+          status: "FAILED",
+          completedAt: expect.any(Date),
+          error: expect.stringMatching(/All 2 bill\(s\) failed/),
+        },
+      });
+
+      // 2. ingestExecutiveOrdersWorkflow 100% permanent failure
+      jest.clearAllMocks();
+      mockDb.jobRun.create.mockResolvedValue({ id: "jr-2" });
+      mockDb.jobRun.update.mockResolvedValue({ id: "jr-2" });
+      mockFetchExecutiveOrdersPage.mockResolvedValueOnce({
+        count: 1,
+        page: 1,
+        total_pages: 1,
+        total_entries: 1,
+        results: [makeEoDocument(1)],
+      });
+      mockHydrateExecutiveOrder.mockRejectedValueOnce(
+        new Error("Missing signing date for document 2026-00001")
+      );
+
+      await expect(
+        ingestExecutiveOrdersWorkflow({ executionId: "fail-all-eos" })
+      ).rejects.toThrow(/All 1 executive order\(s\) failed/);
+
+      expect(mockRevalidatePath).not.toHaveBeenCalled();
+      expect(mockStart).not.toHaveBeenCalled();
+      expect(mockDb.jobRun.update).toHaveBeenCalledTimes(1);
+      expect(mockDb.jobRun.update).toHaveBeenCalledWith({
+        where: { id: "jr-2" },
+        data: {
+          status: "FAILED",
+          completedAt: expect.any(Date),
+          error: expect.stringMatching(/All 1 executive order\(s\) failed/),
+        },
+      });
+
+      // 3. updateTextsWorkflow 100% failure across checked items
+      jest.clearAllMocks();
+      mockDb.jobRun.create.mockResolvedValue({ id: "jr-3" });
+      mockDb.jobRun.update.mockResolvedValue({ id: "jr-3" });
+      mockBackfillMissingBillTexts.mockResolvedValueOnce({
+        processed: 2,
+        updated: 0,
+        urlOnly: 0,
+        failed: 2,
+        updatedIds: [],
+      });
+      mockBackfillMissingEoTexts.mockResolvedValueOnce({
+        processed: 1,
+        updated: 0,
+        urlOnly: 0,
+        failed: 1,
+        updatedIds: [],
+      });
+
+      await expect(
+        updateTextsWorkflow({ executionId: "fail-all-texts" })
+      ).rejects.toThrow(/All 3 checked item\(s\) failed/);
+
+      expect(mockRevalidatePath).not.toHaveBeenCalled();
+      expect(mockStart).not.toHaveBeenCalled();
+      expect(mockDb.jobRun.update).toHaveBeenCalledTimes(1);
+      expect(mockDb.jobRun.update).toHaveBeenCalledWith({
+        where: { id: "jr-3" },
+        data: {
+          status: "FAILED",
+          completedAt: expect.any(Date),
+          error: expect.stringMatching(/All 3 checked item\(s\) failed/),
+        },
+      });
+    });
+  });
+
   describe("Workflow sandbox isolation static checks", () => {
     it("verifies 'use workflow' orchestrators do not import @/lib/db, next/cache, node:*, or setTimeout, and step modules declare 'use step'", () => {
       const rootDir = process.cwd();
@@ -937,6 +1283,8 @@ describe("Durable ingestion & text-backfill workflows + steps", () => {
         expect(source).not.toContain("next/cache");
         expect(source).not.toContain("node:");
         expect(source).not.toContain("@/lib/ingestion");
+        expect(source).not.toContain("ingestion-helpers");
+        expect(source).not.toMatch(/from\s+["']workflow["']/);
         expect(source).not.toMatch(
           /\bsetTimeout\b|\bsetInterval\b|\bfetch\s*\(/
         );

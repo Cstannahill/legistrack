@@ -61,10 +61,17 @@ export async function updateTextsWorkflow(
     const bills = await backfillBillTextsStep(input.billBatchSize);
     const executiveOrders = await backfillEoTextsStep(input.eoBatchSize);
 
+    const totalChecked = bills.processed + executiveOrders.processed;
     const itemsGainedFullText = bills.updated + executiveOrders.updated;
     const itemsProcessed =
       itemsGainedFullText + bills.urlOnly + executiveOrders.urlOnly;
     const itemsFailed = bills.failed + executiveOrders.failed;
+
+    if (totalChecked > 0 && itemsProcessed === 0 && itemsFailed > 0) {
+      throw new Error(
+        `All ${itemsFailed} checked item(s) failed during text backfill (bills failed: ${bills.failed}, executive orders failed: ${executiveOrders.failed})`
+      );
+    }
 
     let revalidated = false;
     if (itemsProcessed > 0) {

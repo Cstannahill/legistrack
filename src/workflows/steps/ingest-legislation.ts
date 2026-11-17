@@ -12,6 +12,16 @@ import {
   CongressClient,
   type CongressBillListItem,
 } from "@/lib/ingestion/congress-client";
+import {
+  isExplicitPermanentError,
+  isExplicitPermanentMessage,
+  isTransientOrSystemicError,
+  isTransientOrSystemicMessage,
+  runTextBackfillStep,
+  throwIfTotalNonPermanentChunkFailure,
+  toRetryableStepError,
+  type ItemFailureRecord,
+} from "@/workflows/steps/ingestion-helpers";
 
 export type { TextBackfillSummary };
 
@@ -129,17 +139,27 @@ async function countBillsNeedingSummarization(
     return hydratedWithTextIds.length;
   }
 
-  return db.bill.count({
-    where: {
-      id: { in: changedBillIds },
-      fullText: { not: null },
-      NOT: { fullText: "" },
-      OR: [
-        { summaries: { none: { summaryType: "STANDARD" } } },
-        { categories: { none: {} } },
-      ],
-    },
-  });
+  try {
+    return await db.bill.count({
+      where: {
+        id: { in: changedBillIds },
+        fullText: { not: null },
+        NOT: { fullText: "" },
+        OR: [
+          { summaries: { none: { summaryType: "STANDARD" } } },
+          { categories: { none: {} } },
+        ],
+      },
+    });
+  } catch (error) {
+    if (isTransientOrSystemicError(error)) {
+      throw toRetryableStepError(
+        error,
+        "[ingest-legislation] Transient DB failure checking summarization eligibility"
+      );
+    }
+    throw error;
+  }
 }
 
 /**
@@ -182,14 +202,22 @@ export async function fetchBillListStep(
 
   let offset = 0;
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
-    const page = await client.fetchBillPage({
-      congress,
-      billTypes: options.billTypes,
-      limit: pageSize,
-      offset,
-      fromDateTime,
-      toDateTime,
-    });
+    let page;
+    try {
+      page = await client.fetchBillPage({
+        congress,
+        billTypes: options.billTypes,
+        limit: pageSize,
+        offset,
+        fromDateTime,
+        toDateTime,
+      });
+    } catch (error) {
+      if (isTransientOrSystemicError(error)) {
+        throw toRetryableStepError(error);
+      }
+      throw error;
+    }
 
     const bills = page.bills ?? [];
     if (bills.length === 0) {
@@ -223,7 +251,8 @@ export async function fetchBillListStep(
 /**
  * Hydrates and persists a bounded chunk of bills via Prisma, returning counts
  * and how many changed bills currently have `fullText` needing summarization
- * or categorization.
+ * or categorization. Throws `RetryableError` on transient upstream/DB outages
+ * or when an entire chunk fails with non-permanent errors.
  */
 export async function ingestBillChunkStep(
   items: BillListTarget[]
@@ -250,6 +279,7 @@ export async function ingestBillChunkStep(
   const changedBillIds: string[] = [];
   const hydratedWithTextIds: string[] = [];
   const errors: IngestItemError[] = [];
+  const failures: ItemFailureRecord[] = [];
 
   for (const item of items) {
     const identifier = buildBillIdentifier(item);
@@ -279,16 +309,31 @@ export async function ingestBillChunkStep(
           break;
         }
         case "failed": {
+          const message = persisted.message ?? "Failed to persist bill";
+          if (isTransientOrSystemicMessage(message)) {
+            throw toRetryableStepError(
+              `${persisted.identifier}: ${message}`,
+              "[ingest-legislation] Transient DB persistence failure"
+            );
+          }
           failed += 1;
-          pushBoundedError(
-            errors,
-            persisted.identifier,
-            persisted.message ?? "Failed to persist bill"
-          );
+          pushBoundedError(errors, persisted.identifier, message);
+          failures.push({
+            identifier: persisted.identifier,
+            message,
+            permanent: isExplicitPermanentMessage(message),
+          });
           break;
         }
       }
     } catch (error) {
+      if (isTransientOrSystemicError(error)) {
+        throw toRetryableStepError(
+          error,
+          `[ingest-legislation] Transient failure ingesting ${identifier}`
+        );
+      }
+
       failed += 1;
       const message = error instanceof Error ? error.message : String(error);
       console.error("[ingest-legislation] Failed to ingest bill", {
@@ -296,8 +341,20 @@ export async function ingestBillChunkStep(
         error: message,
       });
       pushBoundedError(errors, identifier, message);
+      failures.push({
+        identifier,
+        message,
+        permanent: isExplicitPermanentError(error),
+      });
     }
   }
+
+  throwIfTotalNonPermanentChunkFailure(
+    items.length,
+    created + updated + skipped,
+    failures,
+    "[ingest-legislation] Entire bill chunk failed"
+  );
 
   const needsSummarizationCount = await countBillsNeedingSummarization(
     changedBillIds,
@@ -316,7 +373,9 @@ export async function ingestBillChunkStep(
 }
 
 /**
- * Backfills `fullText` and `fullTextUrl` for bills currently missing `fullText`.
+ * Backfills `fullText` and `fullTextUrl` for bills currently missing `fullText`,
+ * throwing `RetryableError` on transient upstream/DB outages or 100%
+ * non-permanent batch failures.
  */
 export async function backfillBillTextsStep(
   batchSize?: number
@@ -331,5 +390,9 @@ export async function backfillBillTextsStep(
           DEFAULT_TEXT_BACKFILL_BATCH_SIZE
         );
 
-  return backfillMissingBillTexts(limit);
+  return runTextBackfillStep(
+    limit,
+    "[update-texts:bills] Transient backfill failure",
+    (resolvedLimit, logger) => backfillMissingBillTexts(resolvedLimit, { logger })
+  );
 }

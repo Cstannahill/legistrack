@@ -105,6 +105,15 @@ export async function ingestExecutiveOrdersWorkflow(
       }
     }
 
+    if (processed > 0 && created + updated + skipped === 0 && failed > 0) {
+      const sample = errors[0]
+        ? `: ${errors[0].identifier} - ${errors[0].error}`
+        : "";
+      throw new Error(
+        `All ${failed} executive order(s) failed during ingestion${sample}`
+      );
+    }
+
     let revalidated = false;
     if (created + updated > 0) {
       await revalidateLegislationPathsStep();
