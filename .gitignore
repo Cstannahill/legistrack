@@ -49,3 +49,11 @@ next-env.d.ts
 .env*.local
 
 .vscode/
+.ai/
+.developer_profile_analysis.md
+.ori/
+DEV_PROFILE.md
+DEV_PROFILE_GROK.md
+DEV_PROFILE_GROK1.md
+DEV_PROFILE_GROK2.md
+lambda/
