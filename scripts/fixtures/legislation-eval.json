@@ -1,0 +1,32 @@
+[
+  {
+    "id": "h-res-211-procedural-rule",
+    "title": "H. Res. 211 — Providing for consideration of H.J. Res. 25, H.R. 1156, and H.R. 1968",
+    "kind": "bill",
+    "text": "Resolved, That upon adoption of this resolution it shall be in order to consider in the House H.J. Res. 25, providing for congressional disapproval of the IRS rule on gross proceeds reporting by brokers that regularly provide services effecting digital asset sales. All points of order against consideration and provisions are waived. The joint resolution shall be considered as read. Debate is limited to one hour, equally divided and controlled by the chair and ranking minority member of the Committee on Ways and Means, followed by one motion to recommit.\n\nSec. 2. Upon adoption, it shall be in order to consider H.R. 1156, to amend the CARES Act to extend the statute of limitations for fraud under certain unemployment programs. The Ways and Means Committee substitute is considered adopted. Points of order are waived; debate is limited to one hour under Ways and Means control; one motion to recommit is allowed.\n\nSec. 3. Upon adoption, it shall be in order to consider H.R. 1968, making further continuing appropriations and other extensions for fiscal year ending September 30, 2025. The amendment printed in the Rules Committee report is considered adopted. Points of order are waived; debate is limited to one hour under Appropriations Committee control; one motion to recommit is allowed.\n\nSec. 4. Each remaining day of the first session of the 119th Congress shall not count as a calendar day under section 202 of the National Emergencies Act with respect to a joint resolution terminating the national emergency declared by the President on February 1, 2025.",
+    "expectedFacts": [
+      { "id": "procedural-not-substantive", "statement": "This is a procedural House resolution setting floor consideration rules, not a bill enacting the substance of the three referenced measures.", "critical": true },
+      { "id": "irs-disapproval", "statement": "It provides for consideration of H.J. Res. 25, which would disapprove an IRS gross-proceeds reporting rule for brokers serving digital-asset sales.", "critical": true },
+      { "id": "unemployment-statute", "statement": "It provides for consideration of H.R. 1156, which would extend the statute of limitations for fraud in certain unemployment programs by amending the CARES Act.", "critical": true },
+      { "id": "appropriations-measure", "statement": "It provides for consideration of H.R. 1968, a continuing appropriations and extensions measure for fiscal year ending September 30, 2025.", "critical": true },
+      { "id": "debate-and-recommit", "statement": "For each measure, the rule limits House debate to one hour and permits one motion to recommit.", "critical": false },
+      { "id": "emergency-calendar-rule", "statement": "For a joint resolution terminating the February 1, 2025 national emergency, remaining days in the first session do not count as calendar days under section 202 of the National Emergencies Act.", "critical": true }
+    ]
+  },
+  {
+    "id": "synthetic-solar-credit-extension",
+    "title": "Community Solar Credit Extension Act",
+    "kind": "bill",
+    "text": "SECTION 1. SHORT TITLE. This Act may be cited as the Community Solar Credit Extension Act.\n\nSEC. 2. EXTENSION OF CREDIT. Section 48E of the Internal Revenue Code is amended to extend the clean electricity investment credit for qualifying community solar facilities placed in service before January 1, 2030. To qualify, a facility must have a maximum net output of 5 megawatts and allocate at least 40 percent of its output to subscribers whose household income is at or below 200 percent of the applicable area median income. The Secretary of the Treasury shall issue implementing guidance within 180 days of enactment.\n\nSEC. 3. NO DIRECT PAYMENT. Nothing in this Act authorizes direct payment of the credit to a facility owner. The credit remains subject to the transfer rules otherwise provided in the Internal Revenue Code.\n\nSEC. 4. EFFECTIVE DATE. The amendments made by this Act apply to facilities placed in service after December 31, 2026. This Act does not change the credit rate or modify prevailing-wage or apprenticeship requirements.",
+    "expectedFacts": [
+      { "id": "credit-expiration", "statement": "Qualifying community solar facilities must be placed in service before January 1, 2030 to use the extended credit.", "critical": true },
+      { "id": "facility-size-cap", "statement": "A qualifying facility may have a maximum net output of 5 megawatts; it is a cap, not a minimum.", "critical": true },
+      { "id": "subscriber-allocation", "statement": "At least 40 percent of facility output must be allocated to subscribers at or below the income threshold.", "critical": true },
+      { "id": "income-threshold", "statement": "Those subscribers' household incomes must be at or below 200 percent of applicable area median income.", "critical": true },
+      { "id": "treasury-guidance", "statement": "The Secretary of the Treasury must issue implementation guidance within 180 days of enactment.", "critical": false },
+      { "id": "no-direct-payment", "statement": "The Act does not authorize direct payment of the credit to a facility owner; the existing transfer rules still apply.", "critical": true },
+      { "id": "effective-date", "statement": "The amendments apply to facilities placed in service after December 31, 2026.", "critical": true },
+      { "id": "no-credit-rate-change", "statement": "The Act does not change the credit rate or prevailing-wage and apprenticeship requirements.", "critical": false }
+    ]
+  }
+]

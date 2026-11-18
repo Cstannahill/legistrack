@@ -46,6 +46,7 @@
     "gen-sum": "tsx scripts/test-generate-summary.ts",
     "gen-sum-or": "tsx scripts/test-generate-summary-openrouter.ts",
     "gen-sum-or-eo": "tsx scripts/test-generate-summary-openrouter-eo.ts",
+    "eval:legislation": "tsx scripts/eval-legislation-models.ts",
     "test-single-bill": "tsx scripts/test-single-bill.ts",
     "test-fetch-veteran-bills": "tsx scripts/test-fetch-veteran-bills.ts",
     "test-companion-bills": "tsx scripts/test-companion-bills.ts",

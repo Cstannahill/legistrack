@@ -13,6 +13,7 @@
 **/dist/
 # testing
 /coverage
+/.eval-results/
 
 # next.js
 /.next/

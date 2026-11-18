@@ -245,13 +245,13 @@ function normalizeCategorySlugs(
   return normalized;
 }
 
-const SUMMARY_SYSTEM_INSTRUCTION =
+export const SUMMARY_SYSTEM_INSTRUCTION =
   "You are an expert legislative analyst. Respond with strict valid JSON only matching the requested schema. Do not include markdown fences or commentary.";
 
 const CATEGORIZE_SYSTEM_INSTRUCTION =
   "You are a legislative categorization engine. Respond with strict valid JSON only matching the requested schema. Do not include markdown fences or commentary.";
 
-function buildSingleSummaryPrompt(
+export function buildSingleSummaryPrompt(
   item: LlmLegislationInput,
   categories: LlmCategoryInput[],
   maxChars: number
