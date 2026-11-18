@@ -6,12 +6,26 @@ export const DEFAULT_OPENROUTER_MODELS = [
   "z-ai/glm-5.3-flash",
 ] as const;
 
+export const OPENROUTER_MODEL_ALIASES = {
+  deepseek: "deepseek/deepseek-v4.1-flash-1017",
+  mimo: "xiaomi/mimo-v2.6-flash",
+  glm: "z-ai/glm-5.3-flash",
+} as const;
+
 export const GEMINI_FALLBACK_MODEL = "gemini-3.8-flash" as const;
 
 export const GEMINI_FALLBACK_JOB_NAME =
   `llm-fallback:${GEMINI_FALLBACK_MODEL}` as const;
 
 export type SummaryProvider = "openai" | "anthropic" | "openrouter";
+
+export type LlmProviderRoute = "auto" | "openrouter" | "gemini";
+
+export interface LlmRoutingOptions {
+  provider?: LlmProviderRoute;
+  openRouterModels?: string[];
+  allowGeminiFallback?: boolean;
+}
 
 export interface LlmCategoryInput {
   id?: string;

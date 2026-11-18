@@ -11,6 +11,7 @@ import {
   type LlmBatchItemOutcome,
   type LlmCategoryInput,
   type LlmLegislationInput,
+  type LlmRoutingOptions,
   SummaryAndCategoryBatchSchema,
   SummaryAndCategoryItemSchema,
   toJsonSchema,
@@ -368,9 +369,13 @@ async function runOpenRouterCascade<T>(opts: {
   maxTokens: number;
   parseOutput: (rawContent: string, model: string) => T;
   cooldownOnParseFailure: boolean;
+  models?: string[];
 }): Promise<CascadeOutcome<T>> {
   const keys = getOpenRouterKeys();
-  const models = getConfiguredOpenRouterModels();
+  const models =
+    opts.models && opts.models.length > 0
+      ? opts.models
+      : getConfiguredOpenRouterModels();
 
   if (keys.length === 0) {
     return {
@@ -575,8 +580,12 @@ async function callGeminiBatch(
 async function summarizeAndCategorizeSingle(
   item: LlmLegislationInput,
   categories: LlmCategoryInput[],
-  opts?: { allowGeminiFallback?: boolean }
+  opts?: LlmRoutingOptions
 ): Promise<LlmBatchItemOutcome> {
+  if (opts?.provider === "gemini") {
+    return callGeminiSingle(item, categories);
+  }
+
   const openRouterPrompt = buildSingleSummaryPrompt(
     item,
     categories,
@@ -588,6 +597,7 @@ async function summarizeAndCategorizeSingle(
     prompt: openRouterPrompt,
     maxTokens: 2500,
     cooldownOnParseFailure: true,
+    models: opts?.openRouterModels,
     parseOutput: (rawContent) => {
       const parsedJson = parseJsonStrict(rawContent);
       const validated = SummaryAndCategoryItemSchema.parse(parsedJson);
@@ -614,7 +624,7 @@ async function summarizeAndCategorizeSingle(
     };
   }
 
-  if (opts?.allowGeminiFallback === false) {
+  if (opts?.allowGeminiFallback === false || opts?.provider === "openrouter") {
     const lastErr =
       openRouterAttempt.errors[openRouterAttempt.errors.length - 1];
     return {
@@ -701,14 +711,21 @@ function extractValidBatchOutcomes(
  */
 export async function summarizeAndCategorizeItems(
   items: LlmLegislationInput[],
-  categories: LlmCategoryInput[]
+  categories: LlmCategoryInput[],
+  options?: LlmRoutingOptions
 ): Promise<LlmBatchItemOutcome[]> {
   if (items.length === 0) {
     return [];
   }
 
+  if (options?.provider === "gemini") {
+    return items.length === 1
+      ? [await callGeminiSingle(items[0], categories)]
+      : callGeminiBatch(items, categories);
+  }
+
   if (items.length === 1) {
-    return [await summarizeAndCategorizeSingle(items[0], categories)];
+    return [await summarizeAndCategorizeSingle(items[0], categories, options)];
   }
 
   const batchPrompt = buildBatchSummaryPrompt(
@@ -724,6 +741,7 @@ export async function summarizeAndCategorizeItems(
     prompt: batchPrompt,
     maxTokens: Math.min(8000, 1500 * items.length),
     cooldownOnParseFailure: false,
+    models: options?.openRouterModels,
     parseOutput: (rawContent, model) =>
       extractValidBatchOutcomes(rawContent, items, categories, model),
   });
@@ -733,19 +751,28 @@ export async function summarizeAndCategorizeItems(
     : new Map<string, LlmBatchItemOutcome>();
 
   const missingAfterBatch = items.filter((item) => !accepted.has(item.id));
+  const singleFailureReasons = new Map<string, string>();
   for (const missingItem of missingAfterBatch) {
     const recovered = await summarizeAndCategorizeSingle(
       missingItem,
       categories,
-      { allowGeminiFallback: false }
+      {
+        provider: "openrouter",
+        openRouterModels: options?.openRouterModels,
+        allowGeminiFallback: false,
+      }
     );
     if (recovered.ok) {
       accepted.set(missingItem.id, recovered);
+    } else {
+      singleFailureReasons.set(missingItem.id, recovered.error);
     }
   }
 
+  const allowGemini =
+    options?.allowGeminiFallback !== false && options?.provider !== "openrouter";
   const stillMissing = items.filter((item) => !accepted.has(item.id));
-  if (stillMissing.length > 0) {
+  if (stillMissing.length > 0 && allowGemini) {
     const geminiOutcomes =
       stillMissing.length === 1
         ? [await callGeminiSingle(stillMissing[0], categories)]
@@ -760,48 +787,68 @@ export async function summarizeAndCategorizeItems(
       accepted.get(item.id) ?? {
         id: item.id,
         ok: false,
-        error: "LLM response omitted item",
+        error:
+          singleFailureReasons.get(item.id) ??
+          (allowGemini
+            ? "LLM response omitted item"
+            : "OpenRouter summarization failed"),
       }
   );
 }
 
 /**
  * Categorizes a single legislative item using the OpenRouter paid Flash cascade
- * with guarded direct Gemini 3.8 Flash fallback.
+ * with guarded direct Gemini 3.8 Flash fallback (or an explicit routing override).
  */
-export async function categorizeLegislationItem(input: {
-  title: string;
-  summary: string;
-  categories: LlmCategoryInput[];
-}): Promise<{ categories: string[]; aiModel: string }> {
+export async function categorizeLegislationItem(
+  input: {
+    title: string;
+    summary: string;
+    categories: LlmCategoryInput[];
+  },
+  options?: LlmRoutingOptions
+): Promise<{ categories: string[]; aiModel: string }> {
   if (input.categories.length === 0) {
     return { categories: [], aiModel: "none" };
   }
 
-  const openRouterPrompt = buildCategorizeOnlyPrompt(
-    input,
-    getOpenRouterMaxInputChars()
-  );
+  if (options?.provider !== "gemini") {
+    const openRouterPrompt = buildCategorizeOnlyPrompt(
+      input,
+      getOpenRouterMaxInputChars()
+    );
 
-  const openRouterAttempt = await runOpenRouterCascade({
-    systemInstruction: CATEGORIZE_SYSTEM_INSTRUCTION,
-    prompt: openRouterPrompt,
-    maxTokens: 300,
-    cooldownOnParseFailure: true,
-    parseOutput: (rawContent) => {
-      const parsedJson = parseJsonStrict(rawContent);
-      return CategorizeOnlySchema.parse(parsedJson);
-    },
-  });
+    const openRouterAttempt = await runOpenRouterCascade({
+      systemInstruction: CATEGORIZE_SYSTEM_INSTRUCTION,
+      prompt: openRouterPrompt,
+      maxTokens: 300,
+      cooldownOnParseFailure: true,
+      models: options?.openRouterModels,
+      parseOutput: (rawContent) => {
+        const parsedJson = parseJsonStrict(rawContent);
+        return CategorizeOnlySchema.parse(parsedJson);
+      },
+    });
 
-  if (openRouterAttempt.ok) {
-    return {
-      categories: normalizeCategorySlugs(
-        openRouterAttempt.data.categories,
-        input.categories
-      ),
-      aiModel: openRouterAttempt.model,
-    };
+    if (openRouterAttempt.ok) {
+      return {
+        categories: normalizeCategorySlugs(
+          openRouterAttempt.data.categories,
+          input.categories
+        ),
+        aiModel: openRouterAttempt.model,
+      };
+    }
+
+    if (
+      options?.allowGeminiFallback === false ||
+      options?.provider === "openrouter"
+    ) {
+      throw new AllOpenRouterKeysExhaustedError(
+        "OpenRouter categorization failed",
+        openRouterAttempt.errors
+      );
+    }
   }
 
   const geminiPrompt = buildCategorizeOnlyPrompt(

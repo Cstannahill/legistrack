@@ -13,6 +13,7 @@ import {
   type LlmBatchItemOutcome,
   type LlmCategoryInput,
   type LlmLegislationInput,
+  type LlmRoutingOptions,
 } from "@/lib/llm/types";
 
 function getPersistedSummaryOutcomeSchema() {
@@ -79,6 +80,11 @@ export interface SummarizeBatchOutcome {
 export interface SelectWorkBatchOptions {
   billBatchSize?: number;
   eoBatchSize?: number;
+}
+
+export interface ProcessSummaryBatchOptions {
+  llmOptions?: LlmRoutingOptions;
+  chunkSize?: number;
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -616,7 +622,8 @@ async function persistCombinedOutcome(
 async function processSingleSummarizeItem(
   item: SummarizeWorkItem,
   categories: CategoryChoice[],
-  outcomeCounters: SummarizeBatchOutcome
+  outcomeCounters: SummarizeBatchOutcome,
+  llmOptions?: LlmRoutingOptions
 ): Promise<void> {
   if (typeof item.fullText !== "string" || item.fullText.trim().length === 0) {
     await recordItemFailure(
@@ -636,7 +643,9 @@ async function processSingleSummarizeItem(
 
   let outcomes: LlmBatchItemOutcome[];
   try {
-    outcomes = await summarizeAndCategorizeItems([input], categories);
+    outcomes = llmOptions
+      ? await summarizeAndCategorizeItems([input], categories, llmOptions)
+      : await summarizeAndCategorizeItems([input], categories);
   } catch (err) {
     if (isFallbackCapReachedError(err)) {
       throw toRetryableCapacityError(err);
@@ -658,10 +667,16 @@ async function processSingleSummarizeItem(
 async function processSummarizeChunk(
   chunk: SummarizeWorkItem[],
   categories: CategoryChoice[],
-  outcomeCounters: SummarizeBatchOutcome
+  outcomeCounters: SummarizeBatchOutcome,
+  llmOptions?: LlmRoutingOptions
 ): Promise<void> {
   if (chunk.length === 1) {
-    await processSingleSummarizeItem(chunk[0], categories, outcomeCounters);
+    await processSingleSummarizeItem(
+      chunk[0],
+      categories,
+      outcomeCounters,
+      llmOptions
+    );
     return;
   }
 
@@ -682,7 +697,12 @@ async function processSummarizeChunk(
     return;
   }
   if (validChunk.length === 1) {
-    await processSingleSummarizeItem(validChunk[0], categories, outcomeCounters);
+    await processSingleSummarizeItem(
+      validChunk[0],
+      categories,
+      outcomeCounters,
+      llmOptions
+    );
     return;
   }
 
@@ -695,7 +715,9 @@ async function processSummarizeChunk(
 
   let outcomes: LlmBatchItemOutcome[];
   try {
-    outcomes = await summarizeAndCategorizeItems(inputs, categories);
+    outcomes = llmOptions
+      ? await summarizeAndCategorizeItems(inputs, categories, llmOptions)
+      : await summarizeAndCategorizeItems(inputs, categories);
   } catch (err) {
     if (isFallbackCapReachedError(err)) {
       throw toRetryableCapacityError(err);
@@ -703,7 +725,12 @@ async function processSummarizeChunk(
 
     // Isolate failures across sibling items if batch call threw unexpectedly
     for (const item of validChunk) {
-      await processSingleSummarizeItem(item, categories, outcomeCounters);
+      await processSingleSummarizeItem(
+        item,
+        categories,
+        outcomeCounters,
+        llmOptions
+      );
     }
     return;
   }
@@ -722,7 +749,8 @@ async function processSummarizeChunk(
 async function processCategoriesOnlyItem(
   item: SummarizeWorkItem,
   categories: CategoryChoice[],
-  outcomeCounters: SummarizeBatchOutcome
+  outcomeCounters: SummarizeBatchOutcome,
+  llmOptions?: LlmRoutingOptions
 ): Promise<void> {
   if (categories.length === 0) {
     return;
@@ -730,11 +758,14 @@ async function processCategoriesOnlyItem(
 
   let rawResult: { categories: string[]; aiModel: string };
   try {
-    rawResult = await categorizeLegislationItem({
+    const catInput = {
       title: item.title,
       summary: item.standardSummaryText || item.title,
       categories,
-    });
+    };
+    rawResult = llmOptions
+      ? await categorizeLegislationItem(catInput, llmOptions)
+      : await categorizeLegislationItem(catInput);
   } catch (err) {
     if (isFallbackCapReachedError(err)) {
       throw toRetryableCapacityError(err);
@@ -1031,7 +1062,8 @@ async function loadBoundedFullTextForItems(
  * and throwing `RetryableError` (`retryAfter: "30m"`) when capacity is capped.
  */
 export async function processSummaryBatchStep(
-  batch: SummarizeWorkBatch
+  batch: SummarizeWorkBatch,
+  options?: ProcessSummaryBatchOptions
 ): Promise<SummarizeBatchOutcome> {
   "use step";
 
@@ -1096,17 +1128,32 @@ export async function processSummaryBatchStep(
   const hydratedSummaryItems =
     await loadBoundedFullTextForItems(needsSummaryItems);
 
-  const chunkSize = parsePositiveInt(
-    process.env.SUMMARIZE_BATCH_SIZE,
-    DEFAULT_SUMMARIZE_BATCH_SIZE
-  );
+  const chunkSize =
+    options?.chunkSize !== undefined &&
+    Number.isFinite(options.chunkSize) &&
+    options.chunkSize > 0
+      ? Math.floor(options.chunkSize)
+      : parsePositiveInt(
+          process.env.SUMMARIZE_BATCH_SIZE,
+          DEFAULT_SUMMARIZE_BATCH_SIZE
+        );
 
   for (const chunk of chunkArray(hydratedSummaryItems, chunkSize)) {
-    await processSummarizeChunk(chunk, batch.categories, outcomeCounters);
+    await processSummarizeChunk(
+      chunk,
+      batch.categories,
+      outcomeCounters,
+      options?.llmOptions
+    );
   }
 
   for (const item of categoriesOnlyItems) {
-    await processCategoriesOnlyItem(item, batch.categories, outcomeCounters);
+    await processCategoriesOnlyItem(
+      item,
+      batch.categories,
+      outcomeCounters,
+      options?.llmOptions
+    );
   }
 
   return outcomeCounters;
