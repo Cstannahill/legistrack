@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { handleSchedule, type ScheduleHandler } from "@vercel/schedules";
 import { start } from "workflow/api";
+import { HookConflictError } from "workflow/errors";
+import { triggerScheduledWorkflow } from "@/lib/schedules/trigger";
 import { ingestExecutiveOrdersWorkflow } from "@/workflows/ingest-eo";
 import { ingestLegislationWorkflow } from "@/workflows/ingest-legislation";
 import { summarizeLegislationWorkflow } from "@/workflows/summarize-legislation";
@@ -21,6 +23,42 @@ jest.mock("@vercel/schedules", () => {
 jest.mock("workflow/api", () => ({
   start: jest.fn(),
 }));
+
+jest.mock("workflow/errors", () => {
+  class MockHookConflictError extends Error {
+    token: string;
+    conflictingRunId?: string;
+    kind?: "start";
+
+    constructor(
+      token: string,
+      conflictingRunId?: string,
+      options?: { kind?: "start" }
+    ) {
+      super(
+        options?.kind === "start"
+          ? `No run was created: workflow run "${conflictingRunId}" already owns this hook token`
+          : `Hook token "${token}" is already in use by another workflow`
+      );
+      this.name = "HookConflictError";
+      this.token = token;
+      if (conflictingRunId !== undefined) {
+        this.conflictingRunId = conflictingRunId;
+      }
+      if (options?.kind !== undefined) {
+        this.kind = options.kind;
+      }
+    }
+
+    static is(value: unknown): value is MockHookConflictError {
+      return value instanceof Error && value.name === "HookConflictError";
+    }
+  }
+
+  return {
+    HookConflictError: MockHookConflictError,
+  };
+});
 
 jest.mock("workflow", () => {
   class MockRetryableError extends Error {
@@ -92,6 +130,10 @@ const SCHEDULE_CASES: ScheduleTestCase[] = [
   },
 ];
 
+const INGESTION_AND_TEXT_CASES = SCHEDULE_CASES.filter(
+  (c) => c.name !== "summarize-legislation"
+);
+
 const CRON_FIELD_REGEX =
   /^(\*|\d+(-\d+)?|\*\/\d+|\d+(-\d+)?\/\d+)(,(\*|\d+(-\d+)?|\*\/\d+|\d+(-\d+)?\/\d+))*$/;
 
@@ -108,19 +150,23 @@ function isValidFiveFieldVercelCron(expr: string): boolean {
 function makeScheduleRequest(
   name: string,
   cron: string,
-  executionId: string
+  executionId: string,
+  overrides?: {
+    scheduledAt?: string;
+    eventType?: string;
+  }
 ): Request {
   return new Request(`https://internal.vercel.local/api/schedules/${name}`, {
     method: "POST",
     headers: {
       "ce-specversion": "1.0",
-      "ce-type": "com.vercel.schedule.v1beta",
+      "ce-type": overrides?.eventType ?? "com.vercel.schedule.v1beta",
       "ce-source": "/vercel/schedules",
       "ce-id": executionId,
       "ce-vssscheduleid": `sched-${name}`,
       "ce-vssschedulename": name,
       "ce-vssnamespace": "default",
-      "ce-vssscheduledat": "2026-11-17T12:00:00.000Z",
+      "ce-vssscheduledat": overrides?.scheduledAt ?? new Date().toISOString(),
       "ce-vssschedulesource": "static",
       "ce-vssexpression": cron,
     },
@@ -160,7 +206,7 @@ describe("Vercel Schedules route handlers and vercel.json", () => {
   });
 
   it.each(SCHEDULE_CASES)(
-    "$name exports only POST (no GET), calls start with executionId, and ignores CRON_SECRET",
+    "$name exports only POST (no GET), starts workflow with atomic start hook & executionId, and ignores CRON_SECRET",
     async ({ name, cron, workflow, route }) => {
       expect(Object.keys(route)).toEqual(["POST"]);
       expect(typeof route.POST).toBe("function");
@@ -173,7 +219,12 @@ describe("Vercel Schedules route handlers and vercel.json", () => {
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("");
       expect(mockStart).toHaveBeenCalledTimes(1);
-      expect(mockStart).toHaveBeenCalledWith(workflow, [{ executionId }]);
+      expect(mockStart).toHaveBeenCalledWith(workflow, [{ executionId }], {
+        experimental_hook: {
+          token: `schedule:${name}:${executionId}`,
+          experimental_minRetention: "7d",
+        },
+      });
       expect(infoSpy).toHaveBeenCalledWith(
         "[schedules] Started workflow",
         expect.objectContaining({
@@ -187,21 +238,172 @@ describe("Vercel Schedules route handlers and vercel.json", () => {
   );
 
   it.each(SCHEDULE_CASES)(
-    "$name returns HTTP 400 without calling start() when CloudEvent headers are missing",
-    async ({ name, route }) => {
-      const request = new Request(
+    "$name absorbs HookConflictError on duplicate CloudEvent delivery with HTTP 200 and no console.error",
+    async ({ name, cron, route }) => {
+      const executionId = `exec-${name}-dup`;
+      mockStart.mockRejectedValueOnce(
+        new HookConflictError(
+          `schedule:${name}:${executionId}`,
+          "wrun_existing_owner",
+          { kind: "start" }
+        )
+      );
+
+      const request = makeScheduleRequest(name, cron, executionId);
+      const response = await route.POST!(request);
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("");
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[schedules] Duplicate schedule delivery skipped",
+        expect.objectContaining({
+          scheduleName: name,
+          executionId,
+          conflictingRunId: "wrun_existing_owner",
+        })
+      );
+      expect(errorSpy).not.toHaveBeenCalled();
+    }
+  );
+
+  describe("stale outage-replay guard", () => {
+    it("skips summarize-legislation when scheduledAt is older than 20 minutes", async () => {
+      const nowMs = new Date("2026-11-18T00:30:00.000Z").getTime();
+      jest.spyOn(Date, "now").mockReturnValue(nowMs);
+
+      const staleScheduledAt = new Date(nowMs - (20 * 60 * 1000 + 1)).toISOString();
+      const request = makeScheduleRequest(
+        "summarize-legislation",
+        "*/20 * * * *",
+        "exec-sum-stale",
+        { scheduledAt: staleScheduledAt }
+      );
+
+      const response = await summarizeLegislationRoute.POST(request);
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("");
+      expect(mockStart).not.toHaveBeenCalled();
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[schedules] Skipped stale schedule replay",
+        expect.objectContaining({
+          scheduleName: "summarize-legislation",
+          executionId: "exec-sum-stale",
+          scheduledAt: staleScheduledAt,
+          maxAgeMs: 20 * 60 * 1000,
+        })
+      );
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it("starts summarize-legislation when scheduledAt is within 20 minutes", async () => {
+      const nowMs = new Date("2026-11-18T00:30:00.000Z").getTime();
+      jest.spyOn(Date, "now").mockReturnValue(nowMs);
+
+      const boundaryScheduledAt = new Date(nowMs - 20 * 60 * 1000).toISOString();
+      const request = makeScheduleRequest(
+        "summarize-legislation",
+        "*/20 * * * *",
+        "exec-sum-fresh",
+        { scheduledAt: boundaryScheduledAt }
+      );
+
+      const response = await summarizeLegislationRoute.POST(request);
+
+      expect(response.status).toBe(200);
+      expect(mockStart).toHaveBeenCalledTimes(1);
+      expect(mockStart).toHaveBeenCalledWith(
+        summarizeLegislationWorkflow,
+        [{ executionId: "exec-sum-fresh" }],
+        {
+          experimental_hook: {
+            token: "schedule:summarize-legislation:exec-sum-fresh",
+            experimental_minRetention: "7d",
+          },
+        }
+      );
+    });
+
+    it.each(INGESTION_AND_TEXT_CASES)(
+      "still starts $name when scheduledAt is older than 20 minutes so missed ingestion windows recover",
+      async ({ name, cron, workflow, route }) => {
+        const nowMs = new Date("2026-11-18T00:30:00.000Z").getTime();
+        jest.spyOn(Date, "now").mockReturnValue(nowMs);
+
+        const oldScheduledAt = new Date(nowMs - 2 * 60 * 60 * 1000).toISOString();
+        const executionId = `exec-${name}-replay`;
+        const request = makeScheduleRequest(name, cron, executionId, {
+          scheduledAt: oldScheduledAt,
+        });
+
+        const response = await route.POST!(request);
+
+        expect(response.status).toBe(200);
+        expect(mockStart).toHaveBeenCalledTimes(1);
+        expect(mockStart).toHaveBeenCalledWith(workflow, [{ executionId }], {
+          experimental_hook: {
+            token: `schedule:${name}:${executionId}`,
+            experimental_minRetention: "7d",
+          },
+        });
+      }
+    );
+
+    it("handles an invalid Date in triggerScheduledWorkflow without throwing RangeError", async () => {
+      await triggerScheduledWorkflow(
+        summarizeLegislationWorkflow,
+        {
+          scheduleId: "sched-sum",
+          executionId: "exec-invalid-date",
+          name: "summarize-legislation",
+          namespace: "default",
+          scheduledAt: new Date("not-a-valid-date"),
+          source: "static",
+          expression: "*/20 * * * *",
+        },
+        { maxAgeMs: 20 * 60 * 1000 }
+      );
+
+      expect(mockStart).toHaveBeenCalledTimes(1);
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[schedules] Started workflow",
+        expect.objectContaining({
+          scheduleName: "summarize-legislation",
+          executionId: "exec-invalid-date",
+          scheduledAt: "Invalid Date",
+        })
+      );
+    });
+  });
+
+  it.each(SCHEDULE_CASES)(
+    "$name returns HTTP 400 without calling start() when CloudEvent headers are missing or malformed",
+    async ({ name, cron, route }) => {
+      const missingHeadersReq = new Request(
         `https://internal.vercel.local/api/schedules/${name}`,
         { method: "POST" }
       );
+      const missingRes = await route.POST!(missingHeadersReq);
+      expect(missingRes.status).toBe(400);
 
-      const response = await route.POST!(request);
-      expect(response.status).toBe(400);
+      const badDateReq = makeScheduleRequest(name, cron, `exec-${name}-baddate`, {
+        scheduledAt: "not-an-iso-timestamp",
+      });
+      const badDateRes = await route.POST!(badDateReq);
+      expect(badDateRes.status).toBe(400);
+
+      const badTypeReq = makeScheduleRequest(name, cron, `exec-${name}-badtype`, {
+        eventType: "com.example.unexpected",
+      });
+      const badTypeRes = await route.POST!(badTypeReq);
+      expect(badTypeRes.status).toBe(400);
+
       expect(mockStart).not.toHaveBeenCalled();
     }
   );
 
   it.each(SCHEDULE_CASES)(
-    "$name propagates workflow start() failures so Vercel records a failed invocation",
+    "$name propagates non-conflict workflow start() failures so Vercel records a failed invocation",
     async ({ name, cron, route }) => {
       mockStart.mockRejectedValueOnce(
         new Error(`Queue unavailable for ${name}`)
