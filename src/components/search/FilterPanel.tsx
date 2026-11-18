@@ -69,7 +69,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
         <div className="space-y-6">
             <div>
                 <div className="mb-2 flex items-center justify-between">
-                    <h3 className="font-semibold">Filters</h3>
+                    <h2 className="font-semibold text-lg">Filters</h2>
                     {hasActiveFilters && (
                         <Button variant="ghost" size="sm" onClick={clearFilters}>
                             <X className="mr-1 h-3 w-3" />
@@ -125,6 +125,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                     <div className="space-y-1">
                         {Object.entries(BILL_STATUS_LABELS).map(([value, label]) => (
                             <button
+                                aria-label="Type of legislation button"
                                 key={value}
                                 onClick={() => updateFilter('status', currentStatus === value ? null : value)}
                                 aria-pressed={currentStatus === value}
@@ -142,13 +143,14 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                 <label className="mb-2 block text-sm font-medium">Categories</label>
                 <div className="space-y-1">
                     {categories.map((category) => (
-                        <button
+                        <Button
+                            aria-label="category"
                             key={category.id}
                             onClick={() =>
                                 updateFilter('category', currentCategory === category.slug ? null : category.slug)
                             }
                             aria-pressed={currentCategory === category.slug}
-                            className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors duration-150 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:bg-accent/80 active:scale-[0.996] ${currentCategory === category.slug ? 'bg-accent font-medium shadow-sm text-background' : 'bg-transparent'}`}
+                            className={`flex w-full items-center text-foreground gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors duration-150 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 hover:bg-accent/80 active:scale-[0.996] ${currentCategory === category.slug ? 'bg-accent font-medium shadow-sm text-background' : 'bg-transparent'}`}
                         >
                             {category.color && (
                                 <div
@@ -157,7 +159,7 @@ export function FilterPanel({ categories }: FilterPanelProps) {
                                 />
                             )}
                             <span className="flex-1">{category.name}</span>
-                        </button>
+                        </Button>
                     ))}
                 </div>
             </div>

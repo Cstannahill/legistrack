@@ -359,7 +359,7 @@ export default async function BillsPage({ searchParams }: PageProps) {
                 <div className="container py-8">
                     <div className="mb-8">
                         <h1 className="mb-2 text-4xl font-bold tracking-tight">Federal Legislation</h1>
-                        <p className="text-lg text-muted-foreground">
+                        <p className="text-lg text-foreground">
                             Browse and search all federal legislation
                         </p>
                     </div>
@@ -373,7 +373,7 @@ export default async function BillsPage({ searchParams }: PageProps) {
                         </aside>
                         <main className="flex-1">
                             <div className="mb-4 flex items-center justify-between">
-                                <p className="text-sm text-muted-foreground">Showing {skip + 1}-{Math.min(skip + limit, total)} of {total} items</p>
+                                <p className="text-sm text-foreground">Showing {skip + 1}-{Math.min(skip + limit, total)} of {total} items</p>
                             </div>
                             {totalPages > 1 && (
                                 <div className="mb-6 flex items-center justify-center gap-2">
@@ -521,7 +521,7 @@ export default async function BillsPage({ searchParams }: PageProps) {
         <div className="container py-8">
             <div className="mb-8">
                 <h1 className="mb-2 text-4xl font-bold tracking-tight">Federal Legislation</h1>
-                <p className="text-lg text-muted-foreground">
+                <p className="text-lg text-white">
                     Browse and search {legislationType === 'EXECUTIVE_ORDERS' ? 'executive orders' : legislationType === 'BILLS' ? `bills from the ${params.congress || CURRENT_CONGRESS}th U.S. Congress` : 'all federal legislation'}
                 </p>
             </div>
@@ -546,7 +546,7 @@ export default async function BillsPage({ searchParams }: PageProps) {
                 {/* Main Content */}
                 <main className="flex-1">
                     <div className="mb-4 flex items-center justify-between">
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm text-foreground">
                             Showing {skip + 1}-{Math.min(skip + limit, total)} of {total} items
                         </p>
                     </div>

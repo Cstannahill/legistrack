@@ -32,11 +32,6 @@ export default async function HomePage() {
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </Link>
-              {/* <Link href="/categories">
-                <Button variant="outline" size="lg">
-                  Explore Categories
-                </Button>
-              </Link> */}
             </div>
 
             {/* Big stat */}

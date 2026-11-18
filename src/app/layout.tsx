@@ -36,9 +36,9 @@ export default function RootLayout({
         <Header />
         <main className="flex-1">{children}</main>
         <footer className="border-t py-6 md:py-0">
-          <div className="container flex h-16 items-center justify-between text-sm text-muted-foreground">
+          <div className="container flex h-16 items-center justify-between text-sm text-foreground/80">
             <p>© {year} LegisTrack. All rights reserved.</p>
-            <p>Data from Congress.gov and Federal Register</p>
+            <p className="text-foreground">Data from Congress.gov and Federal Register</p>
           </div>
         </footer>
         <Analytics />
