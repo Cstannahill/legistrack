@@ -1,226 +1,227 @@
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { db } from "@/lib/db";
+import Link from "next/link"
+import {
+    Archive,
+    ArrowLeft,
+    BarChart3,
+    Bell,
+    History,
+    Smartphone,
+    UserCheck,
+} from "lucide-react"
+import { db } from "@/lib/db"
 
 async function getCoverageMonths() {
-    // 1) Retrieve today's date
-    const today = new Date();
+    const today = new Date()
 
-    // 2) Query DB for the oldest introducedDate among bills
     const oldest = await db.bill.findFirst({
         orderBy: { introducedDate: "asc" },
         select: { introducedDate: true },
-    });
+    })
 
-    // Validation: if no bills
     if (!oldest || !oldest.introducedDate) {
-        return { status: "no-bills" } as const; // validated: no bills found
+        return { status: "no-bills" } as const
     }
 
-    const introduced = new Date(oldest.introducedDate);
+    const introduced = new Date(oldest.introducedDate)
 
-    // Validation: introduced date in future
     if (introduced > today) {
-        return { status: "future" } as const; // validated: oldest date is in future
+        return { status: "future" } as const
     }
 
-    // 3) Calculate months difference (rounded to nearest whole number)
-    const yearsDiff = today.getFullYear() - introduced.getFullYear();
-    const monthsDiff = today.getMonth() - introduced.getMonth();
-    const daysDiff = today.getDate() - introduced.getDate();
+    const yearsDiff = today.getFullYear() - introduced.getFullYear()
+    const monthsDiff = today.getMonth() - introduced.getMonth()
+    const daysDiff = today.getDate() - introduced.getDate()
 
-    let totalMonths = yearsDiff * 12 + monthsDiff;
-    // Adjust if days difference crosses the halfway point of a month
-    if (daysDiff >= 15) totalMonths += 1;
-    if (totalMonths < 0) totalMonths = 0;
+    let totalMonths = yearsDiff * 12 + monthsDiff
+    if (daysDiff >= 15) totalMonths += 1
+    if (totalMonths < 0) totalMonths = 0
 
-    // 4) Return computed months with singular/plural logic
-    return { status: "ok" as const, months: totalMonths };
+    return { status: "ok" as const, months: totalMonths }
 }
 
-export default async function AboutPage() {
-    const coverage = await getCoverageMonths();
+const ROADMAP_ITEMS = [
+    {
+        icon: History,
+        title: "Detailed Actions History",
+        description:
+            "Complete chamber-by-chamber timeline of legislative actions, votes, and amendments over time.",
+    },
+    {
+        icon: Smartphone,
+        title: "Mobile Reading Experience",
+        description:
+            "Continued refinements to filtering, quick scanning, and long-form bill text reading on mobile.",
+    },
+    {
+        icon: Bell,
+        title: "Custom Alerts",
+        description:
+            "Opt-in notifications when bills you follow advance or new legislation appears in your topics.",
+    },
+    {
+        icon: UserCheck,
+        title: "Personalized Tracking",
+        description:
+            "Save and organize bills and executive orders in a personal legislative watchlist.",
+    },
+    {
+        icon: Archive,
+        title: "Expanded Historical Archive",
+        description:
+            "Broader archival coverage reaching further back across earlier sessions of Congress.",
+    },
+    {
+        icon: BarChart3,
+        title: "Legislative Analytics",
+        description:
+            "Clear visual breakdowns of bill activity, committee progress, and topic trends.",
+    },
+] as const
 
-    // Validation is handled inside getCoverageMonths(); proceed to render
+export default async function AboutPage() {
+    const coverage = await getCoverageMonths()
 
     return (
-        <div className="min-h-screen bg-linear-to-b from-stone-800 to-neutral-600 dark:from-gray-900 dark:to-gray-800">
-            <div className="container mx-auto px-4 py-12 max-w-4xl">
+        <div className="container py-10 md:py-14">
+            <div className="mx-auto max-w-3xl">
                 <Link
                     href="/"
-                    className="inline-flex items-center text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 mb-8 transition-colors"
+                    className="mb-8 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
                 >
-                    <ArrowLeft className="w-4 h-4 mr-2" />
-                    Back to Home
+                    <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                    <span>Back to Home</span>
                 </Link>
 
-                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 md:p-12">
-                    <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-100 mb-6">
-                        About Legislation Tracker
-                    </h1>
+                <article className="space-y-10 rounded-xl border border-border bg-card p-6 sm:p-10 md:p-12 shadow-xs">
+                    <header className="space-y-3 border-b border-border/70 pb-8">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+                            About LegisTrack
+                        </p>
+                        <h1 className="font-serif text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                            Making federal legislation legible for everyone.
+                        </h1>
+                        <p className="text-base leading-relaxed text-muted-foreground sm:text-lg">
+                            Simplifying the legal language inside government filings to increase public understanding and civic transparency.
+                        </p>
+                    </header>
 
-                    <section className="mb-8">
-                        <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
+                    <section className="space-y-3">
+                        <h2 className="font-serif text-2xl font-semibold text-foreground">
                             Our Mission
                         </h2>
-                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed text-lg">
-                            <strong>Simplifying the legal language within government legislation to increase transparency.</strong>
-                        </p>
-                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed mt-4">
-                            Government legislation is often written in complex legal language that can be
-                            difficult for everyday citizens to understand. Our goal is to break down these
-                            barriers by providing clear, concise, AI-powered summaries of bills and executive
-                            orders, making government more accessible and transparent for everyone.
+                        <p className="text-[15.5px] leading-[1.75] text-foreground/90">
+                            Federal legislation and presidential directives are written in dense statutory language that is hard to parse without legal training. LegisTrack breaks down those barriers by pairing official source texts with clear, structured AI summaries in Brief, Standard, and Detailed depths.
                         </p>
                     </section>
 
-                    <section className="mb-8 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-6 border-l-4 border-blue-500">
-                        <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
+                    <section className="rounded-lg border border-primary/20 border-l-4 border-l-primary bg-primary/5 p-6 space-y-2">
+                        <h2 className="font-serif text-xl font-semibold text-foreground">
                             Commitment to Free Access
                         </h2>
-                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed text-lg">
-                            <strong>LegisTrack will always be free to use.</strong>
+                        <p className="text-sm font-medium text-foreground">
+                            LegisTrack will always be free to use.
                         </p>
-                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed mt-4">
-                            We believe that access to government legislation and clear explanations of it
-                            should never be behind a paywall. This project isn&apos;t about subscriptions, ads,
-                            or monetization — it&apos;s about making legislation more transparent and
-                            understandable for everyone.
+                        <p className="text-sm leading-relaxed text-muted-foreground">
+                            Access to federal laws and clear explanations of what they do should never sit behind a paywall. There are no subscriptions, ads, or paywalled summaries — only open civic information.
                         </p>
                     </section>
 
-                    <section className="mb-8">
-                        <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                            Current Focus
+                    <section className="space-y-3">
+                        <h2 className="font-serif text-2xl font-semibold text-foreground">
+                            Summarization Principles
                         </h2>
-                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                            We are currently refining our AI summarization technology to strike the perfect
-                            balance between:
+                        <p className="text-[15.5px] leading-[1.75] text-foreground/90">
+                            Every summary is structured around three editorial standards:
                         </p>
-                        <ul className="list-disc list-inside text-gray-700 dark:text-gray-300 mt-3 space-y-2 ml-4">
-                            <li><strong>Brevity</strong> – Keeping summaries concise and easy to read</li>
-                            <li><strong>Clarity</strong> – Using plain language that everyone can understand</li>
-                            <li><strong>Completeness</strong> – Capturing the full scope and intent of the legislation</li>
+                        <ul className="grid gap-3 pt-1 sm:grid-cols-3">
+                            <li className="rounded-lg border border-border bg-muted/35 p-4">
+                                <div className="font-semibold text-foreground">Brevity</div>
+                                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                    Concise briefs you can read in seconds before diving deeper.
+                                </p>
+                            </li>
+                            <li className="rounded-lg border border-border bg-muted/35 p-4">
+                                <div className="font-semibold text-foreground">Clarity</div>
+                                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                    Plain English that explains practical impact without jargon.
+                                </p>
+                            </li>
+                            <li className="rounded-lg border border-border bg-muted/35 p-4">
+                                <div className="font-semibold text-foreground">Completeness</div>
+                                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                    Captures key provisions, impact areas, and official source links.
+                                </p>
+                            </li>
                         </ul>
                     </section>
 
-                    <section className="mb-8">
-                        <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                            Coverage
+                    <section className="space-y-3">
+                        <h2 className="font-serif text-2xl font-semibold text-foreground">
+                            Data Coverage
                         </h2>
-                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
+                        <p className="text-[15.5px] leading-[1.75] text-foreground/90">
                             {coverage.status === "no-bills" ? (
-                                <strong>No legislative data available.</strong>
+                                <strong>No legislative data is currently indexed.</strong>
                             ) : coverage.status === "future" ? (
-                                <strong>Data start date is in the future.</strong>
+                                <strong>Indexed start date is in the future.</strong>
                             ) : (
                                 (() => {
-                                    const months = coverage.months;
-                                    const label = months === 1 ? "month" : "months";
+                                    const months = coverage.months
+                                    const label = months === 1 ? "month" : "months"
                                     return (
                                         <>
-                                            Currently, our database includes legislation from the <strong>past {months} {label}</strong>.
-                                            In future iterations, we plan to expand our coverage to include all available
-                                            historical legislation, providing a comprehensive archive of government actions.
+                                            Our database currently covers federal legislation from the{" "}
+                                            <strong className="font-semibold text-foreground">
+                                                past {months} {label}
+                                            </strong>
+                                            , sourced directly from official APIs including Congress.gov and the Federal Register. Over time, we plan to expand coverage across earlier sessions of Congress.
                                         </>
-                                    );
+                                    )
                                 })()
                             )}
                         </p>
                     </section>
 
-                    <section className="mb-8">
-                        <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                            Roadmap
-                        </h2>
-                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-4">
-                            While we&apos;re focusing on perfecting the core summarization capabilities, we are currently working on or improving the following features planned for the future:
-                        </p>
+                    <section className="space-y-4">
+                        <div className="space-y-1">
+                            <h2 className="font-serif text-2xl font-semibold text-foreground">
+                                Roadmap
+                            </h2>
+                            <p className="text-sm text-muted-foreground">
+                                Ongoing improvements and upcoming capabilities in active development:
+                            </p>
+                        </div>
 
-                        <div className="space-y-4">
-                            <div>
-                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
-                                    Detailed Actions History
-                                </h3>
-                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Actions history for each bill, showing all updates and changes over time.
-                                </p>
-                            </div>
-                            <div className="border-l-4 border-blue-500 pl-4 py-2">
-                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
-                                    📱 Mobile Optimizations
-                                </h3>
-                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Enhanced mobile experience for tracking legislation
-                                </p>
-                            </div>
-
-                            <div className="border-l-4 border-green-500 pl-4 py-2">
-                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
-                                    🔔 Custom Alerts
-                                </h3>
-                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Get notified when new bills in your areas of interest are introduced
-                                </p>
-                            </div>
-
-                            <div className="border-l-4 border-purple-500 pl-4 py-2">
-                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
-                                    👤 Account Tracking
-                                </h3>
-                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Save and organize bills you&apos;re following with personalized accounts
-                                </p>
-                            </div>
-
-                            <div className="border-l-4 border-orange-500 pl-4 py-2">
-                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
-                                    📚 Complete Historical Archive
-                                </h3>
-                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Access to all available historical legislation beyond the current 10-month window
-                                </p>
-                            </div>
-                            <div className="border-l-4 border-red-500 pl-4 py-2">
-                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">
-                                    📊 Advanced Analytics
-                                </h3>
-                                <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
-                                    Insights and trends in legislative activity
-                                </p>
-                            </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            {ROADMAP_ITEMS.map((item) => {
+                                const Icon = item.icon
+                                return (
+                                    <div
+                                        key={item.title}
+                                        className="flex items-start gap-3 rounded-lg border border-border bg-muted/25 p-4"
+                                    >
+                                        <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                                            <Icon className="h-4 w-4" aria-hidden="true" />
+                                        </span>
+                                        <div>
+                                            <h3 className="text-sm font-semibold text-foreground">
+                                                {item.title}
+                                            </h3>
+                                            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                                {item.description}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )
+                            })}
                         </div>
                     </section>
 
-                    <section className="mb-8">
-                        <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                            Technology
-                        </h2>
-                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                            This platform is built with modern web technologies and powered by advanced AI
-                            to deliver accurate, helpful summaries. We source our data from official government
-                            APIs including Congress.gov and the Federal Register to ensure accuracy and reliability.
-                        </p>
-                    </section>
-
-                    <section className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-6 border border-blue-200 dark:border-blue-800">
-                        <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-3">
-                            Stay Tuned
-                        </h2>
-                        <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                            This project is actively being developed. We&apos;re committed to continuously
-                            improving the platform to better serve citizens seeking to understand their
-                            government&apos;s actions. Check back regularly for updates and new features!
-                        </p>
-                    </section>
-
-                    <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700 text-center">
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                            Project created October 1, 2025
-                        </p>
-                    </div>
-                </div>
+                    <footer className="border-t border-border/70 pt-6 text-center text-xs text-muted-foreground">
+                        Project started October 1, 2025 &middot; Data sourced from Congress.gov and the Federal Register
+                    </footer>
+                </article>
             </div>
         </div>
-    );
+    )
 }

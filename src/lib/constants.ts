@@ -1,6 +1,6 @@
 // Application constants
 
-export const APP_NAME = "Legislative Tracker";
+export const APP_NAME = "LegisTrack";
 export const APP_DESCRIPTION =
   "Track, understand, and stay informed about U.S. federal legislation in plain language";
 
@@ -24,18 +24,51 @@ export const CACHE_DURATIONS = {
   SEARCH: 600, // 10 minutes
 } as const;
 
-// Bill status colors
+export type SemanticTone = "neutral" | "info" | "success" | "danger";
+
+export const SEMANTIC_TONE_BADGE_CLASSES: Record<SemanticTone, string> = {
+  neutral:
+    "border-stone-300/80 bg-stone-100/80 text-stone-700 dark:border-stone-700 dark:bg-stone-800/70 dark:text-stone-300",
+  info:
+    "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-800/70 dark:bg-sky-950/60 dark:text-sky-300",
+  success:
+    "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/60 dark:text-emerald-300",
+  danger:
+    "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-800/70 dark:bg-rose-950/60 dark:text-rose-300",
+};
+
+export const SEMANTIC_TONE_DOT_CLASSES: Record<SemanticTone, string> = {
+  neutral: "bg-stone-500 dark:bg-stone-400",
+  info: "bg-sky-600 dark:bg-sky-400",
+  success: "bg-emerald-600 dark:bg-emerald-400",
+  danger: "bg-rose-600 dark:bg-rose-400",
+};
+
+export const BILL_STATUS_TONES = {
+  INTRODUCED: "neutral",
+  REFERRED_TO_COMMITTEE: "neutral",
+  REPORTED_BY_COMMITTEE: "neutral",
+  PASSED_HOUSE: "info",
+  PASSED_SENATE: "info",
+  RESOLVING_DIFFERENCES: "info",
+  PRESENTED_TO_PRESIDENT: "info",
+  BECAME_LAW: "success",
+  VETOED: "danger",
+  FAILED: "danger",
+} as const satisfies Record<string, SemanticTone>;
+
+// Bill status colors (4 semantic tones with full light/dark support)
 export const BILL_STATUS_COLORS = {
-  INTRODUCED: "bg-blue-100 text-blue-800",
-  REFERRED_TO_COMMITTEE: "bg-purple-100 text-purple-800",
-  REPORTED_BY_COMMITTEE: "bg-indigo-100 text-indigo-800",
-  PASSED_HOUSE: "bg-green-100 text-green-800",
-  PASSED_SENATE: "bg-teal-100 text-teal-800",
-  RESOLVING_DIFFERENCES: "bg-yellow-100 text-yellow-800",
-  PRESENTED_TO_PRESIDENT: "bg-orange-100 text-orange-800",
-  BECAME_LAW: "bg-emerald-100 text-emerald-800",
-  VETOED: "bg-red-100 text-red-800",
-  FAILED: "bg-gray-100 text-gray-800",
+  INTRODUCED: SEMANTIC_TONE_BADGE_CLASSES.neutral,
+  REFERRED_TO_COMMITTEE: SEMANTIC_TONE_BADGE_CLASSES.neutral,
+  REPORTED_BY_COMMITTEE: SEMANTIC_TONE_BADGE_CLASSES.neutral,
+  PASSED_HOUSE: SEMANTIC_TONE_BADGE_CLASSES.info,
+  PASSED_SENATE: SEMANTIC_TONE_BADGE_CLASSES.info,
+  RESOLVING_DIFFERENCES: SEMANTIC_TONE_BADGE_CLASSES.info,
+  PRESENTED_TO_PRESIDENT: SEMANTIC_TONE_BADGE_CLASSES.info,
+  BECAME_LAW: SEMANTIC_TONE_BADGE_CLASSES.success,
+  VETOED: SEMANTIC_TONE_BADGE_CLASSES.danger,
+  FAILED: SEMANTIC_TONE_BADGE_CLASSES.danger,
 } as const;
 
 // Bill status labels
@@ -69,12 +102,16 @@ export const EXECUTIVE_ORDER_TYPE_LABELS = {
   DETERMINATION: "Determination",
 } as const;
 
-// Executive Order type colors
+// Executive Order type colors (cohesive civic-teal / slate accents with dark mode variants)
 export const EXECUTIVE_ORDER_TYPE_COLORS = {
-  EXECUTIVE_ORDER: "bg-purple-100 text-purple-800",
-  PRESIDENTIAL_MEMORANDUM: "bg-blue-100 text-blue-800",
-  PROCLAMATION: "bg-indigo-100 text-indigo-800",
-  DETERMINATION: "bg-violet-100 text-violet-800",
+  EXECUTIVE_ORDER:
+    "border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-800/70 dark:bg-teal-950/60 dark:text-teal-300",
+  PRESIDENTIAL_MEMORANDUM:
+    "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-800/70 dark:bg-sky-950/60 dark:text-sky-300",
+  PROCLAMATION:
+    "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800/70 dark:bg-amber-950/60 dark:text-amber-300",
+  DETERMINATION:
+    "border-stone-300 bg-stone-100 text-stone-800 dark:border-stone-700 dark:bg-stone-800/70 dark:text-stone-300",
 } as const;
 
 // Legislation type labels

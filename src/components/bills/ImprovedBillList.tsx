@@ -1,35 +1,86 @@
-// components/bills/ImprovedBillList.tsx
-import React from 'react'
-import { ImprovedBillCard } from './ImprovedBillCard'
-import { ExecutiveOrderCard } from './ExecutiveOrderCard'
+import Link from "next/link"
+import { SearchX } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Button } from "@/components/ui/button"
+import { ImprovedBillCard } from "./ImprovedBillCard"
+import { ExecutiveOrderCard } from "./ExecutiveOrderCard"
+import type { LegislationListItem } from "@/types/legislation"
+import { cn } from "@/lib/utils"
 
-type Item = any
+interface ImprovedBillListProps {
+    items: LegislationListItem[]
+    loading?: boolean
+    view?: "list" | "grid"
+}
 
-export function ImprovedBillList({ items, loading = false }: { items: Item[]; loading?: boolean }) {
+export function ImprovedBillList({
+    items,
+    loading = false,
+    view = "list",
+}: ImprovedBillListProps) {
     if (loading) {
-        // simple skeleton grid (3 columns max)
         return (
-            <div className="lt-grid">
+            <div className={cn(view === "grid" ? "lt-grid" : "space-y-4")}>
                 {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="lt-card lt-card-grid lt-skeleton" style={{ minHeight: 180 }} />
+                    <div
+                        key={i}
+                        className="rounded-xl border border-border bg-card p-5 space-y-3"
+                    >
+                        <div className="flex items-center justify-between">
+                            <Skeleton className="h-5 w-24" />
+                            <Skeleton className="h-5 w-24 rounded-full" />
+                        </div>
+                        <Skeleton className="h-6 w-4/5" />
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-2/3" />
+                        <div className="flex items-center justify-between pt-2">
+                            <Skeleton className="h-4 w-40" />
+                            <Skeleton className="h-4 w-24" />
+                        </div>
+                    </div>
                 ))}
             </div>
         )
     }
 
     if (!items || items.length === 0) {
-        return <div className="py-8 text-center lt-muted">No items match your filters.</div>
+        return (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/50 px-6 py-14 text-center">
+                <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                    <SearchX className="h-6 w-6" aria-hidden="true" />
+                </div>
+                <h2 className="font-serif text-xl font-semibold text-foreground">
+                    No legislation matches your filters
+                </h2>
+                <p className="mt-1.5 max-w-md text-sm text-muted-foreground">
+                    Try broadening your search keywords, switching legislative types, or clearing active filters.
+                </p>
+                <Button asChild variant="outline" size="sm" className="mt-5">
+                    <Link href="/bills">Reset all filters</Link>
+                </Button>
+            </div>
+        )
     }
 
     return (
-        <div className="lt-grid">
-            {items.map((it: any) => {
-                // Accept either unified `bill` shapes or your original `BillListBill` shapes.
-                if (it.type === 'executiveOrder') {
-                    return <ExecutiveOrderCard key={it.id} executiveOrder={it} />
+        <div className={cn(view === "grid" ? "lt-grid" : "space-y-4")}>
+            {items.map((item) => {
+                if (item.type === "executiveOrder") {
+                    return (
+                        <ExecutiveOrderCard
+                            key={`eo-${item.id}`}
+                            executiveOrder={item}
+                            view={view}
+                        />
+                    )
                 }
-                // default -> bill
-                return <ImprovedBillCard key={it.id} bill={it} />
+                return (
+                    <ImprovedBillCard
+                        key={`bill-${item.id}`}
+                        bill={item}
+                        view={view}
+                    />
+                )
             })}
         </div>
     )

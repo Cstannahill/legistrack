@@ -1,364 +1,466 @@
 // Bill Detail Page with Companion Bills Support
-import { notFound } from 'next/navigation'
-import Link from 'next/link'
-import { db } from '@/lib/db'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { StatusBadge } from '@/components/bills/StatusBadge'
-import { SummarySection, KeyPointsList, ImpactAreasList } from '@/components/bills/SummarySection'
-import { LegislativeFullText } from '@/components/bills/LegislativeFullText'
-import { FormattedText } from '@/components/ui/FormattedText'
-import { formatDate } from '@/lib/utils/date'
-import { getBillCongressUrl } from '@/lib/utils/congress-url'
-import { Calendar, User, ExternalLink, FileText, ArrowLeft } from 'lucide-react'
+import { notFound } from "next/navigation"
+import { ExternalLink } from "lucide-react"
+import { db } from "@/lib/db"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { BackLink } from "@/components/bills/BackLink"
+import { BillProgressStepper } from "@/components/bills/BillProgressStepper"
+import { LegislationHeader } from "@/components/bills/LegislationHeader"
+import { LegislativeFullText } from "@/components/bills/LegislativeFullText"
+import { StatusBadge } from "@/components/bills/StatusBadge"
+import { SummarySwitcher, type SummaryEntry } from "@/components/bills/SummarySwitcher"
+import { formatDate } from "@/lib/utils/date"
+import { formatSponsorLabel } from "@/lib/utils/formatting"
+import { getBillCongressUrl } from "@/lib/utils/congress-url"
+import { cn } from "@/lib/utils"
 
 interface PageProps {
     params: Promise<{
         id: string
     }>
 }
-interface SummaryItem { summaryType: string; content: string | null; keyPoints?: string[] | null; impactAreas?: string[] | null; aiModel?: string | null; generatedAt?: string | null }
-interface ActionItem { id: string; actionDate: string; text: string; actionCode?: string | null }
-interface CosponsorItem { fullName: string; party: string; state: string }
-interface BillContentBill {
-    id: string; billType: string; billNumber: number; congress: number; title: string;
-    currentStatus: string; introducedDate: string | Date; statusDate?: string | null; lawNumber?: string | null;
-    shortTitle?: string | null; officialTitle?: string | null; fullText?: string | null; fullTextUrl?: string | null;
-    sponsor?: { fullName: string; party: string; state: string } | null;
-    categories: { id: string; name: string; slug: string; color: string | null }[];
-    summaries?: SummaryItem[]; actions?: ActionItem[]; cosponsors?: CosponsorItem[];
+
+interface ActionItem {
+    id: string
+    actionDate: string
+    text: string
+    actionCode?: string | null
 }
-function BillContent({ bill }: { bill: BillContentBill }) {
+
+interface CosponsorItem {
+    fullName: string
+    party: string
+    state: string
+}
+
+interface BillContentBill {
+    id: string
+    billType: string
+    billNumber: number
+    congress: number
+    title: string
+    currentStatus: string
+    introducedDate: string | Date
+    statusDate?: string | null
+    lawNumber?: string | null
+    shortTitle?: string | null
+    officialTitle?: string | null
+    fullText?: string | null
+    fullTextUrl?: string | null
+    sponsor?: { fullName: string; party: string; state: string } | null
+    categories: { id: string; name: string; slug: string; color: string | null }[]
+    summaries?: SummaryEntry[]
+    actions?: ActionItem[]
+    cosponsors?: CosponsorItem[]
+}
+
+function BillAtAGlanceSidebar({ bill }: { bill: BillContentBill }) {
     const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
     const congressGovUrl = getBillCongressUrl(bill)
-    const briefSummary = bill.summaries?.find((s) => s.summaryType === 'BRIEF')
-    const standardSummary = bill.summaries?.find((s) => s.summaryType === 'STANDARD')
-    const detailedSummary = bill.summaries?.find((s) => s.summaryType === 'DETAILED')
+    const sponsorLabel = formatSponsorLabel(bill.sponsor)
 
     return (
-        <Tabs defaultValue="summary" className="space-y-6 text-zinc-800">
-            <TabsList >
-                <TabsTrigger className="text-zinc-500" value="summary">Summary</TabsTrigger>
-                <TabsTrigger className="text-zinc-500" value="fulltext">Full Text</TabsTrigger>
-                <TabsTrigger className="text-zinc-500" value="details">Details</TabsTrigger>
-                <TabsTrigger className="text-zinc-500" value="actions">Actions</TabsTrigger>
-                {bill.cosponsors && bill.cosponsors.length > 0 && (
-                    <TabsTrigger className="text-zinc-500" value="cosponsors">
-                        Cosponsors ({bill.cosponsors.length})
-                    </TabsTrigger>
-                )}
-            </TabsList>
+        <aside className="space-y-5 lg:sticky lg:top-20 lg:self-start">
+            <Card className="py-5">
+                <CardContent className="space-y-5 px-5">
+                    <BillProgressStepper status={bill.currentStatus} />
 
-            {/* Summary Tab */}
-            <TabsContent value="summary" className="space-y-4">
-                {!briefSummary && !standardSummary && !detailedSummary && (
-                    <Card>
-                        <CardContent className="py-8 text-center">
-                            <p className="text-muted-foreground">
-                                No AI-generated summaries available yet. Summaries are
-                                generated automatically and will appear here once processed.
-                            </p>
-                        </CardContent>
-                    </Card>
-                )}
-
-                {briefSummary && (
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Brief Summary</CardTitle>
-                            <CardDescription>
-                                Quick overview in 2-3 sentences
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-base leading-relaxed">
-                                <FormattedText text={briefSummary.content || ''} />
-                            </p>
-                            {briefSummary.keyPoints && briefSummary.keyPoints.length > 0 && (
-                                <SummarySection title="Key Points" variant="keyPoints">
-                                    <KeyPointsList points={briefSummary.keyPoints} />
-                                </SummarySection>
-                            )}
-                            <div className="mt-4 text-xs text-muted-foreground">
-                                Generated by {briefSummary.aiModel || 'AI Model'} on{' '}
-                                {briefSummary.generatedAt ? formatDate(briefSummary.generatedAt) : '—'}
-                            </div>
-                        </CardContent>
-                    </Card>
-                )}
-
-                {standardSummary && (
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Standard Summary</CardTitle>
-                            <CardDescription>
-                                Comprehensive overview in 1-2 paragraphs
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-base leading-relaxed">
-                                <FormattedText text={standardSummary.content || ''} />
-                            </p>
-                            {standardSummary.keyPoints && standardSummary.keyPoints.length > 0 && (
-                                <SummarySection title="Key Points" variant="keyPoints">
-                                    <KeyPointsList points={standardSummary.keyPoints} />
-                                </SummarySection>
-                            )}
-                            {standardSummary.impactAreas && standardSummary.impactAreas.length > 0 && (
-                                <SummarySection title="Impact Areas" variant="impactAreas">
-                                    <ImpactAreasList areas={standardSummary.impactAreas} />
-                                </SummarySection>
-                            )}
-                            <div className="mt-4 text-xs text-muted-foreground">
-                                Generated by {standardSummary.aiModel || 'AI Model'} on{' '}
-                                {standardSummary.generatedAt ? formatDate(standardSummary.generatedAt) : '—'}
-                            </div>
-                        </CardContent>
-                    </Card>
-                )}
-
-                {detailedSummary && (
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Detailed Analysis</CardTitle>
-                            <CardDescription>
-                                In-depth analysis of the legislation
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="prose prose-sm max-w-none dark:prose-invert">
-                                <p className="text-base leading-relaxed">
-                                    <FormattedText text={detailedSummary.content || ''} />
-                                </p>
-                            </div>
-                            {detailedSummary.keyPoints && detailedSummary.keyPoints.length > 0 && (
-                                <SummarySection title="Key Points" variant="keyPoints">
-                                    <KeyPointsList points={detailedSummary.keyPoints} />
-                                </SummarySection>
-                            )}
-                            {detailedSummary.impactAreas && detailedSummary.impactAreas.length > 0 && (
-                                <SummarySection title="Impact Areas" variant="impactAreas">
-                                    <ImpactAreasList areas={detailedSummary.impactAreas} />
-                                </SummarySection>
-                            )}
-                            <div className="mt-4 text-xs text-muted-foreground">
-                                Generated by {detailedSummary.aiModel || 'AI Model'} on{' '}
-                                {detailedSummary.generatedAt ? formatDate(detailedSummary.generatedAt) : '—'}
-                            </div>
-                        </CardContent>
-                    </Card>
-                )}
-            </TabsContent>
-
-            {/* Full Text Tab */}
-            <TabsContent value="fulltext" className="space-y-4 grid-cols-3">
-                {bill.fullText ? (
-                    <LegislativeFullText
-                        text={bill.fullText}
-                        billIdentifier={billIdentifier}
-                    />
-                ) : bill.fullTextUrl ? (
-                    <Card>
-                        <CardContent className="py-8">
-                            <div className="text-center">
-                                <p className="mb-4 text-muted-foreground">
-                                    Full text is available on Congress.gov
-                                </p>
-                                <a
-                                    href={bill.fullTextUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-2 text-primary hover:underline"
-                                >
-                                    View full text on Congress.gov
-                                    <ExternalLink className="h-4 w-4" />
-                                </a>
-                            </div>
-                        </CardContent>
-                    </Card>
-                ) : (
-                    <Card>
-                        <CardContent className="py-8">
-                            <div className="text-center">
-                                <p className="text-muted-foreground">
-                                    Full text not yet available. Legislative text is
-                                    typically published shortly after introduction.
-                                </p>
-                            </div>
-                        </CardContent>
-                    </Card>
-                )}
-            </TabsContent>
-
-            {/* Details Tab */}
-            <TabsContent value="details" className="space-y-4">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Bill Information</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="grid gap-4 md:grid-cols-2">
-                            <div>
-                                <h4 className="mb-1 text-sm font-semibold">Bill Number</h4>
-                                <p className="text-sm text-muted-foreground">
+                    <div className="border-t border-border/70 pt-4">
+                        <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            At a Glance
+                        </div>
+                        <dl className="space-y-3 text-sm">
+                            <div className="flex items-start justify-between gap-3">
+                                <dt className="text-muted-foreground">Identifier</dt>
+                                <dd className="font-mono font-medium text-foreground text-right">
                                     {billIdentifier}
-                                </p>
+                                </dd>
                             </div>
-                            <div>
-                                <h4 className="mb-1 text-sm font-semibold">Congress</h4>
-                                <p className="text-sm text-muted-foreground">
-                                    {bill.congress}th Congress
-                                </p>
+                            <div className="flex items-start justify-between gap-3">
+                                <dt className="text-muted-foreground">Congress</dt>
+                                <dd className="font-medium text-foreground text-right">
+                                    {bill.congress}th
+                                </dd>
                             </div>
-                            <div>
-                                <h4 className="mb-1 text-sm font-semibold">
-                                    Introduced Date
-                                </h4>
-                                <p className="text-sm text-muted-foreground">
+                            <div className="flex items-start justify-between gap-3">
+                                <dt className="text-muted-foreground">Introduced</dt>
+                                <dd className="font-mono text-foreground tabular-nums text-right">
                                     {formatDate(bill.introducedDate)}
-                                </p>
+                                </dd>
                             </div>
-                            <div>
-                                <h4 className="mb-1 text-sm font-semibold">Status Date</h4>
-                                <p className="text-sm text-muted-foreground">
-                                    {bill.statusDate ? formatDate(bill.statusDate) : '—'}
-                                </p>
-                            </div>
-                            <div>
-                                <h4 className="mb-1 text-sm font-semibold">Current Status</h4>
-                                <StatusBadge status={bill.currentStatus} />
-                            </div>
-                            {bill.sponsor && (
-                                <div>
-                                    <h4 className="mb-1 text-sm font-semibold">Sponsor</h4>
-                                    <p className="text-sm text-muted-foreground">
-                                        {bill.sponsor.fullName} ({bill.sponsor.party}-{bill.sponsor.state})
-                                    </p>
+                            {bill.statusDate && (
+                                <div className="flex items-start justify-between gap-3">
+                                    <dt className="text-muted-foreground">Status Date</dt>
+                                    <dd className="font-mono text-foreground tabular-nums text-right">
+                                        {formatDate(bill.statusDate)}
+                                    </dd>
                                 </div>
                             )}
-                        </div>
+                            {sponsorLabel && (
+                                <div className="space-y-1 border-t border-border/60 pt-3">
+                                    <dt className="text-xs text-muted-foreground">Primary Sponsor</dt>
+                                    <dd className="font-medium text-foreground leading-snug">
+                                        {sponsorLabel}
+                                    </dd>
+                                </div>
+                            )}
+                            {bill.lawNumber && (
+                                <div className="flex items-start justify-between gap-3 border-t border-border/60 pt-3">
+                                    <dt className="text-muted-foreground">Public Law</dt>
+                                    <dd className="font-mono font-semibold text-emerald-700 dark:text-emerald-300 text-right">
+                                        {bill.lawNumber}
+                                    </dd>
+                                </div>
+                            )}
+                        </dl>
+                    </div>
 
-                        {bill.officialTitle && (
-                            <div>
-                                <h4 className="mb-1 text-sm font-semibold">Official Title</h4>
-                                <p className="text-sm text-muted-foreground">
-                                    {bill.officialTitle}
-                                </p>
-                            </div>
-                        )}
-
-                        <div>
+                    <div className="border-t border-border/70 pt-4">
+                        <Button asChild variant="outline" className="w-full justify-center">
                             <a
                                 href={congressGovUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
                             >
-                                View on Congress.gov
-                                <ExternalLink className="h-3 w-3" />
+                                <span>View on Congress.gov</span>
+                                <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                             </a>
-                        </div>
-                    </CardContent>
-                </Card>
-            </TabsContent>
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+        </aside>
+    )
+}
 
-            {/* Actions Tab */}
-            <TabsContent value="actions" className="space-y-4">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Legislative Actions</CardTitle>
-                        <CardDescription>
-                            Chronological history of actions taken on {billIdentifier}
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        {!bill.actions || bill.actions.length === 0 ? (
-                            <p className="text-center text-sm text-muted-foreground">
-                                No actions recorded yet.
-                            </p>
-                        ) : (
-                            <div className="space-y-4">
-                                {bill.actions.map((action) => (
-                                    <div
-                                        key={action.id}
-                                        className="border-l-2 border-muted pl-4"
+function BillContent({ bill }: { bill: BillContentBill }) {
+    const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
+    const congressGovUrl = getBillCongressUrl(bill)
+    const sponsorLabel = formatSponsorLabel(bill.sponsor)
+
+    return (
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <Tabs defaultValue="summary" className="min-w-0 space-y-6">
+                <TabsList className="w-full justify-start overflow-x-auto sm:w-fit">
+                    <TabsTrigger value="summary">Summary</TabsTrigger>
+                    <TabsTrigger value="fulltext">Full Text</TabsTrigger>
+                    <TabsTrigger value="actions">
+                        Actions{bill.actions?.length ? ` (${bill.actions.length})` : ""}
+                    </TabsTrigger>
+                    <TabsTrigger value="details">Details</TabsTrigger>
+                    {bill.cosponsors && bill.cosponsors.length > 0 && (
+                        <TabsTrigger value="cosponsors">
+                            Cosponsors ({bill.cosponsors.length})
+                        </TabsTrigger>
+                    )}
+                </TabsList>
+
+                {/* Summary Tab */}
+                <TabsContent value="summary" className="space-y-4">
+                    <SummarySwitcher summaries={bill.summaries} />
+                </TabsContent>
+
+                {/* Full Text Tab */}
+                <TabsContent value="fulltext" className="space-y-4">
+                    {bill.fullText ? (
+                        <LegislativeFullText
+                            text={bill.fullText}
+                            billIdentifier={billIdentifier}
+                        />
+                    ) : bill.fullTextUrl ? (
+                        <Card>
+                            <CardContent className="py-10 text-center">
+                                <p className="mb-4 text-muted-foreground">
+                                    Full legislative text is available on Congress.gov.
+                                </p>
+                                <Button asChild variant="outline">
+                                    <a
+                                        href={bill.fullTextUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
                                     >
-                                        <div className="mb-1 text-sm font-semibold">
-                                            {formatDate(action.actionDate)}
-                                        </div>
-                                        <p className="text-sm text-muted-foreground">
-                                            {action.text}
-                                        </p>
-                                        {action.actionCode && (
-                                            <Badge
-                                                variant="outline"
-                                                className="mt-2 text-xs"
-                                            >
-                                                {action.actionCode}
-                                            </Badge>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-            </TabsContent>
+                                        View full text on Congress.gov
+                                        <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                                    </a>
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    ) : (
+                        <Card>
+                            <CardContent className="py-10 text-center">
+                                <p className="text-muted-foreground">
+                                    Full text not yet available. Legislative text is typically published shortly after introduction.
+                                </p>
+                            </CardContent>
+                        </Card>
+                    )}
+                </TabsContent>
 
-            {/* Cosponsors Tab */}
-            {bill.cosponsors && bill.cosponsors.length > 0 && (
-                <TabsContent value="cosponsors" className="space-y-4">
+                {/* Actions Timeline Tab */}
+                <TabsContent value="actions" className="space-y-4">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Cosponsors</CardTitle>
+                            <CardTitle className="font-serif text-xl">
+                                Legislative Actions
+                            </CardTitle>
                             <CardDescription>
-                                Members of Congress who have cosponsored this bill
+                                Chronological history of actions taken on {billIdentifier}
                             </CardDescription>
                         </CardHeader>
                         <CardContent>
-                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                                {bill.cosponsors.map((cosponsor) => (
-                                    <div
-                                        key={cosponsor.fullName}
-                                        className="rounded-lg border p-4"
-                                    >
-                                        <h4 className="font-semibold">
-                                            {cosponsor.fullName}
-                                        </h4>
-                                        <p className="text-sm text-muted-foreground">
-                                            {cosponsor.party}-{cosponsor.state}
-                                        </p>
+                            {!bill.actions || bill.actions.length === 0 ? (
+                                <p className="py-6 text-center text-sm text-muted-foreground">
+                                    No actions recorded yet.
+                                </p>
+                            ) : (
+                                <ol className="relative space-y-6 before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-px before:bg-border">
+                                    {bill.actions.map((action, idx) => {
+                                        const isLatest = idx === 0
+                                        return (
+                                            <li key={action.id} className="relative pl-7">
+                                                <span
+                                                    className={cn(
+                                                        "absolute left-0 top-1.5 h-3.5 w-3.5 rounded-full border-2",
+                                                        isLatest
+                                                            ? "border-primary bg-primary ring-4 ring-primary/15"
+                                                            : "border-border bg-card"
+                                                    )}
+                                                    aria-hidden="true"
+                                                />
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <time className="font-mono text-xs font-semibold text-foreground tabular-nums">
+                                                        {formatDate(action.actionDate)}
+                                                    </time>
+                                                    {isLatest && (
+                                                        <Badge variant="secondary" className="text-[11px]">
+                                                            Latest
+                                                        </Badge>
+                                                    )}
+                                                    {action.actionCode && (
+                                                        <Badge variant="outline" className="font-mono text-[11px]">
+                                                            {action.actionCode}
+                                                        </Badge>
+                                                    )}
+                                                </div>
+                                                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+                                                    {action.text}
+                                                </p>
+                                            </li>
+                                        )
+                                    })}
+                                </ol>
+                            )}
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                {/* Details Tab */}
+                <TabsContent value="details" className="space-y-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="font-serif text-xl">
+                                Bill Information
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-5">
+                            <dl className="grid gap-4 sm:grid-cols-2">
+                                <div>
+                                    <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                        Bill Number
+                                    </dt>
+                                    <dd className="mt-1 font-mono text-sm font-medium text-foreground">
+                                        {billIdentifier}
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                        Congress
+                                    </dt>
+                                    <dd className="mt-1 text-sm text-foreground">
+                                        {bill.congress}th U.S. Congress
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                        Introduced Date
+                                    </dt>
+                                    <dd className="mt-1 font-mono text-sm text-foreground tabular-nums">
+                                        {formatDate(bill.introducedDate)}
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                        Status Date
+                                    </dt>
+                                    <dd className="mt-1 font-mono text-sm text-foreground tabular-nums">
+                                        {bill.statusDate ? formatDate(bill.statusDate) : "—"}
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                        Current Status
+                                    </dt>
+                                    <dd className="mt-1.5">
+                                        <StatusBadge status={bill.currentStatus} />
+                                    </dd>
+                                </div>
+                                {sponsorLabel && (
+                                    <div>
+                                        <dt className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                            Sponsor
+                                        </dt>
+                                        <dd className="mt-1 text-sm text-foreground">
+                                            {sponsorLabel}
+                                        </dd>
                                     </div>
-                                ))}
+                                )}
+                            </dl>
+
+                            {bill.officialTitle && (
+                                <div className="border-t border-border/60 pt-4">
+                                    <h4 className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                        Official Title
+                                    </h4>
+                                    <p className="text-sm leading-relaxed text-foreground/90">
+                                        {bill.officialTitle}
+                                    </p>
+                                </div>
+                            )}
+
+                            <div className="border-t border-border/60 pt-4">
+                                <a
+                                    href={congressGovUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                                >
+                                    <span>View full record on Congress.gov</span>
+                                    <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                                </a>
                             </div>
                         </CardContent>
                     </Card>
                 </TabsContent>
-            )}
-        </Tabs>
+
+                {/* Cosponsors Tab */}
+                {bill.cosponsors && bill.cosponsors.length > 0 && (
+                    <TabsContent value="cosponsors" className="space-y-4">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="font-serif text-xl">
+                                    Cosponsors
+                                </CardTitle>
+                                <CardDescription>
+                                    Members of Congress who have cosponsored {billIdentifier}
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    {bill.cosponsors.map((cosponsor) => (
+                                        <div
+                                            key={cosponsor.fullName}
+                                            className="rounded-lg border border-border bg-muted/25 p-3.5"
+                                        >
+                                            <div className="font-medium text-foreground">
+                                                {cosponsor.fullName}
+                                            </div>
+                                            <div className="mt-0.5 text-xs text-muted-foreground">
+                                                {cosponsor.party}-{cosponsor.state}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
+                )}
+            </Tabs>
+
+            <BillAtAGlanceSidebar bill={bill} />
+        </div>
     )
 }
 
 export default async function BillDetailPage({ params }: PageProps) {
     const { id } = await params
 
-    // Fetch bill via SQL function returning JSONB
-    interface SummaryJSON { summaryType: string; content: string | null; keyPoints?: string[] | null; impactAreas?: string[] | null; aiModel?: string | null; generatedAt?: string | null }
-    interface ActionJSON { id: string; actionDate: string; text: string; actionCode?: string | null }
-    interface CategoryJSON { id: string; name: string; slug: string; color: string | null }
-    interface SponsorJSON { id: string; fullName: string; party: string; state: string; bioguideId?: string | null }
-    interface CosponsorJSON { id: string; fullName: string; party: string; state: string }
+    interface SummaryJSON {
+        summaryType: string
+        content: string | null
+        keyPoints?: string[] | null
+        impactAreas?: string[] | null
+        aiModel?: string | null
+        generatedAt?: string | null
+    }
+    interface ActionJSON {
+        id: string
+        actionDate: string
+        text: string
+        actionCode?: string | null
+    }
+    interface CategoryJSON {
+        id: string
+        name: string
+        slug: string
+        color: string | null
+    }
+    interface SponsorJSON {
+        id: string
+        fullName: string
+        party: string
+        state: string
+        bioguideId?: string | null
+    }
+    interface CosponsorJSON {
+        id: string
+        fullName: string
+        party: string
+        state: string
+    }
     interface CompanionBillJSON {
-        id: string; billType: string; billNumber: number; congress: number; title: string; currentStatus: string; introducedDate: string; statusDate: string | null;
-        lawNumber: string | null; shortTitle: string | null; officialTitle: string | null; fullText: string | null; fullTextUrl: string | null;
-        sponsor: SponsorJSON | null; categories: CategoryJSON[]; summaries: SummaryJSON[]; actions: ActionJSON[]; cosponsors: CosponsorJSON[]
+        id: string
+        billType: string
+        billNumber: number
+        congress: number
+        title: string
+        currentStatus: string
+        introducedDate: string
+        statusDate: string | null
+        lawNumber: string | null
+        shortTitle: string | null
+        officialTitle: string | null
+        fullText: string | null
+        fullTextUrl: string | null
+        sponsor: SponsorJSON | null
+        categories: CategoryJSON[]
+        summaries: SummaryJSON[]
+        actions: ActionJSON[]
+        cosponsors: CosponsorJSON[]
     }
     interface BillJSON {
-        id: string; billType: string; billNumber: number; congress: number; title: string; shortTitle: string | null; officialTitle: string | null;
-        currentStatus: string; statusDate: string | null; introducedDate: string; lawNumber: string | null; fullText: string | null; fullTextUrl: string | null;
-        sponsor: SponsorJSON | null; categories: CategoryJSON[]; summaries: SummaryJSON[]; actions: ActionJSON[]; cosponsors: CosponsorJSON[];
-        companionBills: CompanionBillJSON[]; companionOf: CompanionBillJSON[]
+        id: string
+        billType: string
+        billNumber: number
+        congress: number
+        title: string
+        shortTitle: string | null
+        officialTitle: string | null
+        currentStatus: string
+        statusDate: string | null
+        introducedDate: string
+        lawNumber: string | null
+        fullText: string | null
+        fullTextUrl: string | null
+        sponsor: SponsorJSON | null
+        categories: CategoryJSON[]
+        summaries: SummaryJSON[]
+        actions: ActionJSON[]
+        cosponsors: CosponsorJSON[]
+        companionBills: CompanionBillJSON[]
+        companionOf: CompanionBillJSON[]
     }
 
     const billRows = await db.$queryRaw<{ bill: BillJSON }[]>`SELECT get_bill_by_id(${id}::text) AS bill`
@@ -368,146 +470,57 @@ export default async function BillDetailPage({ params }: PageProps) {
         notFound()
     }
 
-    const normalizedBill: BillJSON & { companionBills: CompanionBillJSON[]; companionOf: CompanionBillJSON[] } = {
-        ...billJson!,
-        companionBills: Array.isArray(billJson?.companionBills)
-            ? billJson!.companionBills
+    const bill: BillJSON = {
+        ...billJson,
+        companionBills: Array.isArray(billJson.companionBills)
+            ? billJson.companionBills
             : [],
-        companionOf: billJson?.companionOf || [],
+        companionOf: billJson.companionOf || [],
     }
 
-    const bill = normalizedBill
-
     const companions: CompanionBillJSON[] = bill.companionBills || []
-
-
     const hasCompanions = companions.length > 0
-
     const billIdentifier = `${bill.billType.toUpperCase()} ${bill.billNumber}`
 
     return (
-        <div className="container py-8 overflow-x-hidden">
-            {/* Back button */}
-            <Link
-                href="/bills"
-                className="mb-6 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-            >
-                <ArrowLeft className="h-4 w-4" />
-                Back to all bills
-            </Link>
-
-            {/* Header */}
-            <div className="mb-8">
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-                    <div className="flex-1">
-                        <div className="mb-2 flex items-center gap-2 flex-wrap">
-                            <Badge variant="outline" className="font-mono text-white">
-                                {billIdentifier}
-                            </Badge>
-                            {companions.map((companion) => (
-                                <Badge key={companion.id} variant="outline" className="font-mono">
-                                    {companion.billType.toUpperCase()} {companion.billNumber}
-                                </Badge>
-                            ))}
-                            <span className="text-sm text-foreground">
-                                {bill.congress}th Congress
-                            </span>
-                            <StatusBadge status={bill.currentStatus} />
-                        </div>
-                        <h1 className="mb-2 text-lg font-bold tracking-tight md:text-lg">
-                            {bill.title}
-                        </h1>
-                        {bill.shortTitle && bill.shortTitle !== bill.title && (
-                            <p className="text-lg text-muted-foreground">
-                                Short Title: {bill.shortTitle}
-                            </p>
-                        )}
-                    </div>
-                </div>
-
-                {/* Meta information */}
-                <div className="flex flex-wrap gap-4 text-sm">
-                    <div className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-muted-foreground" />
-                        <span>
-                            Introduced: <strong>{formatDate(bill.introducedDate)}</strong>
-                        </span>
-                    </div>
-                    {bill.sponsor && (
-                        <div className="flex items-center gap-2">
-                            <User className="h-4 w-4 text-muted-foreground" />
-                            <span>
-                                Sponsor:{' '}
-                                <strong>
-                                    {bill.sponsor.fullName} ({bill.sponsor.party}-
-                                    {bill.sponsor.state})
-                                </strong>
-                            </span>
-                        </div>
-                    )}
-                    {bill.lawNumber && (
-                        <div className="flex items-center gap-2">
-                            <FileText className="h-4 w-4 text-muted-foreground" />
-                            <span>
-                                Law Number: <strong>{bill.lawNumber}</strong>
-                            </span>
-                        </div>
-                    )}
-                </div>
-
-                {/* Categories */}
-                {bill.categories.length > 0 && (
-                    <div className="mt-4 flex flex-wrap gap-2">
-                        {bill.categories.map((category: CategoryJSON) => (
-                            <Badge
-                                key={category.id}
-                                variant="secondary"
-                                style={{
-                                    backgroundColor: category.color
-                                        ? `${category.color}15`
-                                        : undefined,
-                                    color: category.color || undefined,
-                                }}
-                            >
-                                {category.name}
-                            </Badge>
-                        ))}
-                    </div>
-                )}
-
-                {/* External links */}
-                <div className="mt-4">
-                    <a
-                        href={getBillCongressUrl(bill)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-2 text-sm hover:underline text-foreground"
-                    >
-                        View on Congress.gov
-                        <ExternalLink className="h-3 w-3 text-foreground" />
-                    </a>
-                </div>
+        <div className="container py-8 md:py-10">
+            <div className="mb-6">
+                <BackLink fallbackHref="/bills" label="Back to legislation" />
             </div>
 
-            {/* Main content - with chamber tabs if companions exist */}
+            <div className="mb-8">
+                <LegislationHeader
+                    identifier={billIdentifier}
+                    title={bill.title}
+                    shortTitle={bill.shortTitle}
+                    congress={bill.congress}
+                    status={bill.currentStatus}
+                    companionIdentifiers={companions.map((c) => ({
+                        id: c.id,
+                        label: `${c.billType.toUpperCase()} ${c.billNumber}`,
+                    }))}
+                    categories={bill.categories}
+                />
+            </div>
+
             {hasCompanions ? (
                 <Tabs defaultValue={bill.id} className="space-y-6">
-                    <div className="rounded-lg border bg-muted/50 p-2">
-                        <div className="mb-2 text-sm font-semibold text-muted-foreground px-2">
-                            Chamber Versions:
+                    <div className="rounded-xl border border-border bg-muted/40 p-3">
+                        <div className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Chamber Versions
                         </div>
                         <TabsList className="w-full justify-start">
                             <TabsTrigger value={bill.id} className="flex-1">
                                 {bill.billType.toUpperCase()} {bill.billNumber}
-                                <span className="ml-2 text-xs text-muted-foreground">
-                                    ({bill.billType.toUpperCase() === 'HR' || bill.billType.toUpperCase() === 'HJRES' ? 'House' : 'Senate'})
+                                <span className="ml-1.5 text-xs text-muted-foreground">
+                                    ({bill.billType.toUpperCase() === "HR" || bill.billType.toUpperCase() === "HJRES" ? "House" : "Senate"})
                                 </span>
                             </TabsTrigger>
                             {companions.map((companion) => (
                                 <TabsTrigger key={companion.id} value={companion.id} className="flex-1">
                                     {companion.billType.toUpperCase()} {companion.billNumber}
-                                    <span className="ml-2 text-xs text-muted-foreground">
-                                        ({companion.billType.toUpperCase() === 'HR' || companion.billType.toUpperCase() === 'HJRES' ? 'House' : 'Senate'})
+                                    <span className="ml-1.5 text-xs text-muted-foreground">
+                                        ({companion.billType.toUpperCase() === "HR" || companion.billType.toUpperCase() === "HJRES" ? "House" : "Senate"})
                                     </span>
                                 </TabsTrigger>
                             ))}

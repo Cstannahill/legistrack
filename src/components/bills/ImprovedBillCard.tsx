@@ -1,52 +1,52 @@
-// components/bills/ImprovedBillCard.tsx
-import Link from 'next/link'
-import React from 'react'
-import { Calendar, User, FileText, Sparkles } from 'lucide-react'
-import { formatDate } from '@/lib/utils/date'
-import { truncate } from '@/lib/utils/formatting'
-import { getCategoryBySlug } from '@/lib/utils/category-helper'
-import { StatusBadge } from './StatusBadge'
-import { Badge } from '@/components/ui/badge'
+import Link from "next/link"
+import { Calendar, FileText, Sparkles, User } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { StatusBadge } from "./StatusBadge"
+import { CategoryBadge } from "./CategoryBadge"
+import { formatDate } from "@/lib/utils/date"
+import {
+    formatSponsorLabel,
+    getBillStageSummary,
+    truncate,
+} from "@/lib/utils/formatting"
+import type { BillListItem } from "@/types/legislation"
+import { cn } from "@/lib/utils"
 
-type BillProps = {
-    bill: {
-        id: string
-        billType: string
-        billNumber: number
-        congress: number
-        title: string
-        currentStatus: string
-        introducedDate: Date | string
-        fullText?: string | null
-        sponsor?: { fullName: string; party: string; state: string } | null
-        categories: Array<{ id: string; name: string; slug: string; color?: string | null }>
-        summaries?: Array<{ content: string }>
-    }
+interface ImprovedBillCardProps {
+    bill: BillListItem
+    view?: "list" | "grid"
 }
 
 /**
- * Polished bill card used in lists.
- * - Uses accessible layout with clear metadata
- * - Colored category chips (derived from category helper)
- * - StatusBadge for consistent status styling
+ * Editorial bill card supporting both scannable list rows (default) and 2-column grid cards.
  */
-export function ImprovedBillCard({ bill }: BillProps) {
-    const idLabel = `${bill.billType?.toUpperCase() ?? ''} ${bill.billNumber ?? ''}`
-
-    // Debug: Log the summaries to see what we're getting
-    console.log('Bill summaries:', bill.summaries)
-
-    const summary = bill.summaries?.[0]?.content || ''
-    const hasSummary = !!summary
-    const hasFullText = !!bill.fullText
+export function ImprovedBillCard({
+    bill,
+    view = "list",
+}: ImprovedBillCardProps) {
+    const idLabel = `${bill.billType?.toUpperCase() ?? ""} ${bill.billNumber ?? ""}`
+    const summary = bill.summaries?.[0]?.content || ""
+    const hasSummary = Boolean(summary)
+    const hasFullText = Boolean(bill.fullText)
+    const sponsorLabel = formatSponsorLabel(bill.sponsor)
+    const stage = getBillStageSummary(bill.currentStatus)
 
     return (
-        <Link href={`/bills/${bill.id}`} aria-label={`Open ${idLabel} ${bill.title}`}>
-            <article className="lt-card lt-card-grid h-full">
-                {/* Header row with bill ID and status badge */}
-                <div className="flex items-start justify-between gap-3 w-full">
-                    <div className="flex items-center gap-3 flex-wrap">
-                        <Badge variant="outline" className="font-mono text-xs">
+        <Link
+            href={`/bills/${bill.id}`}
+            aria-label={`Open ${idLabel} ${bill.title}`}
+            className="group block h-full"
+        >
+            <article
+                className={cn(
+                    "lt-card",
+                    view === "list" ? "p-5 sm:p-6" : "p-5"
+                )}
+            >
+                {/* Header row: identifier + congress + status */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="font-mono text-xs font-semibold">
                             {idLabel}
                         </Badge>
                         <span className="text-xs text-muted-foreground">
@@ -56,76 +56,96 @@ export function ImprovedBillCard({ bill }: BillProps) {
                     <StatusBadge status={bill.currentStatus} />
                 </div>
 
-                {/* Title - full width */}
-                <h3 className="lt-title text-base md:text-lg leading-snug">
-                    {truncate(bill.title, 140)}
+                {/* Title */}
+                <h3 className="mt-3 font-serif text-lg font-semibold leading-snug text-foreground transition-colors group-hover:text-primary sm:text-[1.18rem]">
+                    {truncate(bill.title, view === "list" ? 180 : 135)}
                 </h3>
 
-
+                {/* AI Summary Preview */}
+                {summary && (
+                    <p
+                        className={cn(
+                            "mt-2 text-sm leading-relaxed text-muted-foreground",
+                            view === "list" ? "line-clamp-2 max-w-3xl" : "line-clamp-3"
+                        )}
+                    >
+                        {summary}
+                    </p>
+                )}
 
                 {/* Categories */}
                 {bill.categories.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                        {bill.categories.slice(0, 3).map((c) => {
-                            const category = getCategoryBySlug(c.slug as any) || c
-                            const color = category?.color || undefined
-                            return (
-                                <Badge
-                                    key={c.id}
-                                    variant="secondary"
-                                    className="text-xs"
-                                    style={{
-                                        backgroundColor: color ? `${color}15` : undefined,
-                                        color: color || undefined,
-                                    }}
-                                >
-                                    {c.name}
-                                </Badge>
-                            )
-                        })}
+                    <div className="mt-3.5 flex flex-wrap items-center gap-1.5">
+                        {bill.categories.slice(0, 3).map((cat) => (
+                            <CategoryBadge key={cat.id} category={cat} />
+                        ))}
+                        {bill.categories.length > 3 && (
+                            <span className="px-1.5 text-xs text-muted-foreground">
+                                +{bill.categories.length - 3}
+                            </span>
+                        )}
                     </div>
                 )}
 
-                {/* Footer with metadata */}
-                <div className="mt-auto pt-3 border-t border-border">
-                    <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
-                        {bill.sponsor && (
-                            <div className="flex items-center gap-1 flex-1 min-w-0">
-                                <User className="h-3 w-3 flex-shrink-0" />
-                                <span className="truncate">
-                                    {bill.sponsor.fullName}
+                {/* Footer metadata + mini stage progress */}
+                <div className="mt-auto pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border/70 pt-3 text-xs text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+                            {sponsorLabel && (
+                                <span className="inline-flex items-center gap-1.5 min-w-0">
+                                    <User className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                    <span className="truncate">{sponsorLabel}</span>
                                 </span>
+                            )}
+                            <span className="inline-flex items-center gap-1.5 shrink-0 font-mono tabular-nums">
+                                <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span>{formatDate(bill.introducedDate)}</span>
+                            </span>
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0">
+                            {(hasSummary || hasFullText) && (
+                                <div className="hidden sm:flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                                    {hasSummary && (
+                                        <span className="inline-flex items-center gap-1 text-primary">
+                                            <Sparkles className="h-3 w-3" aria-hidden="true" />
+                                            Brief
+                                        </span>
+                                    )}
+                                    {hasFullText && (
+                                        <span className="inline-flex items-center gap-1">
+                                            <FileText className="h-3 w-3" aria-hidden="true" />
+                                            Full Text
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* 4-segment legislative stage micro-bar */}
+                            <div
+                                className="flex items-center gap-1"
+                                title={`Legislative stage ${stage.step} of 4`}
+                                aria-label={`Legislative stage ${stage.step} of 4`}
+                            >
+                                {[1, 2, 3, 4].map((idx) => {
+                                    const active = idx <= stage.step
+                                    const barColor = !active
+                                        ? "bg-border"
+                                        : stage.outcome === "failed" && idx === 4
+                                            ? "bg-rose-500"
+                                            : stage.outcome === "law"
+                                                ? "bg-emerald-600 dark:bg-emerald-400"
+                                                : "bg-primary"
+                                    return (
+                                        <span
+                                            key={idx}
+                                            className={cn("h-1.5 w-3.5 rounded-full", barColor)}
+                                        />
+                                    )
+                                })}
                             </div>
-                        )}
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                            <Calendar className="h-3 w-3" />
-                            <span>{formatDate(bill.introducedDate)}</span>
                         </div>
                     </div>
-
-                    {/* Availability Indicators */}
-                    {(hasSummary || hasFullText) && (
-                        <div className="mt-2 flex items-center gap-2">
-                            {hasSummary && (
-                                <Badge
-                                    variant="secondary"
-                                    className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 text-xs"
-                                >
-                                    <Sparkles className="mr-1 h-3 w-3" />
-                                    Summary
-                                </Badge>
-                            )}
-                            {hasFullText && (
-                                <Badge
-                                    variant="secondary"
-                                    className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 text-xs"
-                                >
-                                    <FileText className="mr-1 h-3 w-3" />
-                                    Full Text
-                                </Badge>
-                            )}
-                        </div>
-                    )}
                 </div>
             </article>
         </Link>

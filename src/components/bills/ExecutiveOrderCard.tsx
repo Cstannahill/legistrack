@@ -1,124 +1,122 @@
-// ExecutiveOrderCard Component - Improved EO card aligned with bill cards
-import Link from 'next/link'
-import { Badge } from '@/components/ui/badge'
-import { Calendar, User, FileText, Sparkles } from 'lucide-react'
-import { formatDate } from '@/lib/utils/date'
-import { truncate } from '@/lib/utils/formatting'
-import { getCategoryBySlug, type CategorySlug } from '@/lib/utils/category-helper'
-import { EXECUTIVE_ORDER_TYPE_COLORS, EXECUTIVE_ORDER_TYPE_LABELS } from '@/lib/constants'
+import Link from "next/link"
+import { Calendar, FileText, Sparkles, User } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { CategoryBadge } from "./CategoryBadge"
+import { formatDate } from "@/lib/utils/date"
+import { truncate } from "@/lib/utils/formatting"
+import {
+    EXECUTIVE_ORDER_TYPE_COLORS,
+    EXECUTIVE_ORDER_TYPE_LABELS,
+} from "@/lib/constants"
+import type { ExecutiveOrderListItem } from "@/types/legislation"
+import { cn } from "@/lib/utils"
 
 interface ExecutiveOrderCardProps {
-    executiveOrder: {
-        id: string
-        orderNumber: number
-        executiveOrderType: 'EXECUTIVE_ORDER' | 'PRESIDENTIAL_MEMORANDUM' | 'PROCLAMATION' | 'DETERMINATION'
-        title: string
-        signingDate: Date | string
-        presidentName: string
-        fullText?: string | null
-        categories: Array<{
-            id: string
-            name: string
-            slug: string
-            color?: string | null
-        }>
-        summaries?: Array<{
-            content: string
-        }>
-    }
+    executiveOrder: ExecutiveOrderListItem
+    view?: "list" | "grid"
 }
 
-export function ExecutiveOrderCard({ executiveOrder }: ExecutiveOrderCardProps) {
+export function ExecutiveOrderCard({
+    executiveOrder,
+    view = "list",
+}: ExecutiveOrderCardProps) {
     const eoIdentifier = `EO ${executiveOrder.orderNumber}`
-    const summary = executiveOrder.summaries?.[0]?.content || ''
-    const hasSummary = !!summary
-    const hasFullText = !!executiveOrder.fullText
-    const typeLabel = EXECUTIVE_ORDER_TYPE_LABELS[executiveOrder.executiveOrderType] || executiveOrder.executiveOrderType
-    const typeColor = EXECUTIVE_ORDER_TYPE_COLORS[executiveOrder.executiveOrderType] || 'bg-gray-100 text-gray-800'
+    const summary = executiveOrder.summaries?.[0]?.content || ""
+    const hasSummary = Boolean(summary)
+    const hasFullText = Boolean(executiveOrder.fullText)
+    const typeLabel =
+        EXECUTIVE_ORDER_TYPE_LABELS[executiveOrder.executiveOrderType] ||
+        executiveOrder.executiveOrderType
+    const typeColor =
+        EXECUTIVE_ORDER_TYPE_COLORS[executiveOrder.executiveOrderType] ||
+        EXECUTIVE_ORDER_TYPE_COLORS.EXECUTIVE_ORDER
 
     return (
         <Link
             href={`/bills/eo/${executiveOrder.id}`}
             aria-label={`Open ${eoIdentifier} ${executiveOrder.title}`}
+            className="group block h-full"
         >
-            <article className="lt-card lt-card-grid h-full">
-                <div className="flex items-start justify-between gap-3 w-full">
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline" className="font-mono text-xs">
+            <article
+                className={cn(
+                    "lt-card",
+                    view === "list" ? "p-5 sm:p-6" : "p-5"
+                )}
+            >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="font-mono text-xs font-semibold">
                             {eoIdentifier}
                         </Badge>
-                        <Badge className={`text-xs ${typeColor}`}>
+                        <span
+                            className={cn(
+                                "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                                typeColor
+                            )}
+                        >
                             {typeLabel}
-                        </Badge>
+                        </span>
                     </div>
                 </div>
 
-                <h3 className="lt-title text-base md:text-lg leading-snug">
-                    {truncate(executiveOrder.title, 140)}
+                <h3 className="mt-3 font-serif text-lg font-semibold leading-snug text-foreground transition-colors group-hover:text-primary sm:text-[1.18rem]">
+                    {truncate(executiveOrder.title, view === "list" ? 180 : 135)}
                 </h3>
 
                 {summary && (
-                    <p className="text-sm text-muted-foreground line-clamp-3">
-                        {truncate(summary, 200)}
+                    <p
+                        className={cn(
+                            "mt-2 text-sm leading-relaxed text-muted-foreground",
+                            view === "list" ? "line-clamp-2 max-w-3xl" : "line-clamp-3"
+                        )}
+                    >
+                        {summary}
                     </p>
                 )}
 
                 {executiveOrder.categories.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                        {executiveOrder.categories.slice(0, 3).map((category) => {
-                            const categoryData = getCategoryBySlug(category.slug as CategorySlug)
-                            const color = categoryData?.color
-                            return (
-                                <Badge
-                                    key={category.id}
-                                    variant="secondary"
-                                    className="text-xs"
-                                    style={{
-                                        backgroundColor: color ? `${color}15` : undefined,
-                                        color: color || undefined,
-                                    }}
-                                >
-                                    {category.name}
-                                </Badge>
-                            )
-                        })}
+                    <div className="mt-3.5 flex flex-wrap items-center gap-1.5">
+                        {executiveOrder.categories.slice(0, 3).map((category) => (
+                            <CategoryBadge key={category.id} category={category} />
+                        ))}
+                        {executiveOrder.categories.length > 3 && (
+                            <span className="px-1.5 text-xs text-muted-foreground">
+                                +{executiveOrder.categories.length - 3}
+                            </span>
+                        )}
                     </div>
                 )}
 
-                <div className="mt-auto pt-3 border-t border-border">
-                    <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
-                        <div className="flex items-center gap-1 flex-1 min-w-0">
-                            <User className="h-3 w-3 flex-shrink-0" />
-                            <span className="truncate">{executiveOrder.presidentName}</span>
+                <div className="mt-auto pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border/70 pt-3 text-xs text-muted-foreground">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0">
+                            <span className="inline-flex items-center gap-1.5 min-w-0">
+                                <User className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                <span className="truncate">{executiveOrder.presidentName}</span>
+                            </span>
+                            <span className="inline-flex items-center gap-1.5 shrink-0 font-mono tabular-nums">
+                                <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span>{formatDate(executiveOrder.signingDate)}</span>
+                            </span>
                         </div>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                            <Calendar className="h-3 w-3" />
-                            <span>{formatDate(executiveOrder.signingDate)}</span>
-                        </div>
-                    </div>
 
-                    {(hasSummary || hasFullText) && (
-                        <div className="mt-2 flex items-center gap-2">
-                            {hasSummary && (
-                                <Badge
-                                    variant="secondary"
-                                    className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 text-xs"
-                                >
-                                    <Sparkles className="mr-1 h-3 w-3" />
-                                    Summary
-                                </Badge>
-                            )}
-                            {hasFullText && (
-                                <Badge
-                                    variant="secondary"
-                                    className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 text-xs"
-                                >
-                                    <FileText className="mr-1 h-3 w-3" />
-                                    Full Text
-                                </Badge>
-                            )}
-                        </div>
-                    )}
+                        {(hasSummary || hasFullText) && (
+                            <div className="hidden sm:flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                                {hasSummary && (
+                                    <span className="inline-flex items-center gap-1 text-primary">
+                                        <Sparkles className="h-3 w-3" aria-hidden="true" />
+                                        Brief
+                                    </span>
+                                )}
+                                {hasFullText && (
+                                    <span className="inline-flex items-center gap-1">
+                                        <FileText className="h-3 w-3" aria-hidden="true" />
+                                        Full Text
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </article>
         </Link>
