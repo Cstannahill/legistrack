@@ -51,7 +51,7 @@ export function Header() {
 
                     {!loading && user && (
                         <div className="relative">
-                            <button onClick={() => setOpen((s) => !s)} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-muted">
+                            <button aria-label="login" onClick={() => setOpen((s) => !s)} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-muted">
                                 <UserIcon className="h-5 w-5" />
                                 <span className="text-sm">{user.name ?? user.username ?? user.email}</span>
                             </button>
@@ -62,7 +62,7 @@ export function Header() {
                                     ) : (
                                         <div className="block px-2 py-1 text-sm text-muted-foreground">Settings (disabled)</div>
                                     )}
-                                    <button onClick={logout} className="mt-2 flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted">
+                                    <button aria-label="logout" onClick={logout} className="mt-2 flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted">
                                         <LogOut className="h-4 w-4" />
                                         Logout
                                     </button>

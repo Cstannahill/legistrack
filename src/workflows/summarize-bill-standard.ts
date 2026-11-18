@@ -1,20 +1,23 @@
 import { db } from "@/lib/db";
 import { fetchBillDetails, fetchBillText } from "@/lib/api/congress";
+import { resolveBillStatusFromText } from "@/lib/ingestion/bill-status";
 import { BillStatus } from "@prisma/client";
-import { generateSummary, type SummaryType } from "@/lib/ai/summarizer";
-import { generateSummaryOpenAI } from "@/lib/ai/summarizer-openai";
-import {
-  generateSummaryOpenRouter,
-  getAvailableModels,
-  isValidModel,
-  type OpenRouterModel,
-} from "@/lib/ai/summarizer-openrouter";
+import type { SummaryType } from "@/lib/ai/summarizer";
+import type { OpenRouterModel } from "@/lib/ai/summarizer-openrouter";
+import { summarizeAndCategorizeItems } from "@/lib/llm/router";
+import type { SummaryProvider } from "@/lib/llm/types";
 
-export type SummaryProvider = "openai" | "anthropic" | "openrouter";
+export type { SummaryProvider };
 
 type LoggerFn = (message: string) => void;
 
-type SummaryReturn = Awaited<ReturnType<typeof generateSummary>>;
+type SummaryReturn = {
+  content: string;
+  keyPoints: string[];
+  impactAreas: string[];
+  model: string;
+  confidence: number;
+};
 
 export interface SummarizeBillStandardOptions {
   billId: string;
@@ -43,97 +46,16 @@ const SUPPORTED_MODELS: SummaryProvider[] = [
 const defaultLogger: LoggerFn = (message) => console.log(message);
 
 export function determineBillStatus(latestActionText?: string): BillStatus {
-  if (!latestActionText) return "INTRODUCED";
-
-  const actionLower = latestActionText.toLowerCase();
-
-  if (
-    actionLower.includes("became public law") ||
-    actionLower.includes("signed by president")
-  ) {
-    return "BECAME_LAW";
-  }
-
-  if (
-    actionLower.includes("vetoed") ||
-    actionLower.includes("returned unsigned")
-  ) {
-    return "VETOED";
-  }
-
-  if (
-    actionLower.includes("presented to president") ||
-    actionLower.includes("sent to president")
-  ) {
-    return "PRESENTED_TO_PRESIDENT";
-  }
-
-  if (
-    actionLower.includes("conference") ||
-    actionLower.includes("resolving differences")
-  ) {
-    return "RESOLVING_DIFFERENCES";
-  }
-
-  if (
-    actionLower.includes("passed senate") ||
-    actionLower.includes("agreed to in senate")
-  ) {
-    return "PASSED_SENATE";
-  }
-
-  if (
-    actionLower.includes("passed house") ||
-    actionLower.includes("agreed to in house")
-  ) {
-    return "PASSED_HOUSE";
-  }
-
-  if (
-    actionLower.includes("reported by committee") ||
-    actionLower.includes("committee discharged")
-  ) {
-    return "REPORTED_BY_COMMITTEE";
-  }
-
-  if (
-    actionLower.includes("referred to") ||
-    actionLower.includes("committee")
-  ) {
-    return "REFERRED_TO_COMMITTEE";
-  }
-
-  if (
-    actionLower.includes("failed") ||
-    actionLower.includes("rejected") ||
-    actionLower.includes("not agreed to")
-  ) {
-    return "FAILED";
-  }
-
-  return "INTRODUCED";
+  return resolveBillStatusFromText(latestActionText);
 }
 
-function resolveProvider(rawModel?: string | null): SummaryProvider {
-  if (!rawModel) return "openai";
-  const normalized = rawModel.toLowerCase() as SummaryProvider;
-  return SUPPORTED_MODELS.includes(normalized) ? normalized : "openai";
-}
-
-function resolveOpenRouterModel(
-  preferredModel?: string | null
-): OpenRouterModel {
-  const defaultModel: OpenRouterModel = "qwen";
-  if (!preferredModel) {
-    return defaultModel;
-  }
-
-  const normalized = preferredModel.toLowerCase();
-  if (isValidModel(normalized)) {
-    return normalized as OpenRouterModel;
-  }
-
-  return defaultModel;
+/**
+ * Resolves the active summarization provider, defaulting to `"openrouter"`.
+ */
+export function resolveProvider(rawModel?: string | null): SummaryProvider {
+  if (!rawModel) return "openrouter";
+  const normalized = rawModel.trim().toLowerCase() as SummaryProvider;
+  return SUPPORTED_MODELS.includes(normalized) ? normalized : "openrouter";
 }
 
 export async function summarizeBillStandard(
@@ -142,7 +64,6 @@ export async function summarizeBillStandard(
   const {
     billId,
     aiModel,
-    openRouterModel,
     skipIfExists = true,
     requireFullText = true,
     logger = defaultLogger,
@@ -177,9 +98,6 @@ export async function summarizeBillStandard(
     const normalizedBillType = bill.billType.toLowerCase();
     const provider = resolveProvider(
       aiModel ?? process.env.AI_MODEL ?? process.env.INGEST_AI_MODEL
-    );
-    const openRouterChoice = resolveOpenRouterModel(
-      openRouterModel ?? process.env.OPENROUTER_MODEL
     );
 
     log(`   → Fetching bill details from Congress.gov...`);
@@ -243,29 +161,49 @@ export async function summarizeBillStandard(
     let summaryResult: SummaryReturn;
 
     if (provider === "openai") {
-      summaryResult = (await generateSummaryOpenAI({
+      const { generateSummaryOpenAI } = await import(
+        "@/lib/ai/summarizer-openai"
+      );
+      summaryResult = await generateSummaryOpenAI({
         ...summaryInput,
-      })) as SummaryReturn;
+      });
       modelName = summaryResult.model;
     } else if (provider === "anthropic") {
+      const { generateSummary } = await import("@/lib/ai/summarizer");
       summaryResult = await generateSummary({
         ...summaryInput,
       });
       modelName = summaryResult.model;
     } else {
-      const resolvedModel = getAvailableModels().find(
-        (model) => model.key === openRouterChoice
+      const categories = await db.category.findMany({
+        select: { id: true, slug: true, name: true, description: true },
+      });
+      const [outcome] = await summarizeAndCategorizeItems(
+        [
+          {
+            id: bill.id,
+            title: summaryInput.title,
+            text: summaryInput.fullText,
+            kind: "bill",
+          },
+        ],
+        categories
       );
-      log(
-        `   🌐 Using OpenRouter model ${
-          resolvedModel?.name || openRouterChoice
-        } (${openRouterChoice})`
-      );
-      summaryResult = (await generateSummaryOpenRouter({
-        ...summaryInput,
-        model: openRouterChoice,
-      })) as SummaryReturn;
-      modelName = summaryResult.model;
+
+      if (!outcome || !outcome.ok) {
+        throw new Error(
+          outcome?.error ?? "OpenRouter/Gemini summarization failed"
+        );
+      }
+
+      summaryResult = {
+        content: outcome.summary,
+        keyPoints: outcome.keyPoints,
+        impactAreas: outcome.impactAreas,
+        model: outcome.aiModel,
+        confidence: outcome.confidence ?? 0.8,
+      };
+      modelName = outcome.aiModel;
     }
 
     const createdSummary = await db.summary.create({

@@ -140,9 +140,12 @@ LIMIT=250 OFFSET=750 npm run fetch-bills  # Bills 750-999
 
 ### 🤖 Scheduled Jobs Keep Pace
 
-- Inngest background functions now call the same shared workflow (`src/workflows/summarize-bill-standard.ts`) as the CLI. Cron-triggered runs only generate **STANDARD** summaries and respect `AI_MODEL`/`INGEST_AI_MODEL` overrides—including OpenRouter selections.
-- The `fetch-bills` job mirrors the CLI normalization steps, coercing bill numbers to integers, syncing official titles, updating `lastFetchedAt`, and preserving status history even when nothing else changes.
-- Categorization and batch fan-out still execute only after a successful STANDARD summary, so downstream jobs never run on incomplete records.
+- Background automation runs on **Vercel Workflows & Schedules** (`src/workflows/` and `src/app/api/schedules/*`, configured in `vercel.json`):
+  - `src/workflows/ingest-legislation.ts` (every 6 hours via `src/app/api/schedules/ingest-legislation/route.ts`) mirrors CLI normalization—coercing bill numbers to integers, syncing official titles, updating `lastFetchedAt`, and preserving status history—then triggers `summarizeLegislationWorkflow` when changed bills have `fullText` awaiting summarization or categorization.
+  - `src/workflows/ingest-eo.ts` (every 12 hours via `src/app/api/schedules/ingest-eo/route.ts`) ingests Federal Register executive orders and presidential documents, triggering summarization when needed.
+  - `src/workflows/update-texts.ts` (every 4 hours via `src/app/api/schedules/update-texts/route.ts`) backfills missing bill and executive-order full texts and triggers summarization when new `fullText` is stored.
+  - `src/workflows/summarize-legislation.ts` (every 20 minutes via `src/app/api/schedules/summarize-legislation/route.ts`) generates **STANDARD** summaries and assigns categories in a single pass via the OpenRouter/Gemini router (`src/lib/llm/router.ts`).
+- Single-bill helper `src/workflows/summarize-bill-standard.ts` remains available for manual CLI/helper usage and respects `AI_MODEL`/`INGEST_AI_MODEL` overrides (`openrouter`, `openai`, `anthropic`).
 
 ### `migrate-data-to-supabase.ts` - Sync Local Database to Supabase
 
@@ -857,13 +860,15 @@ TOTAL_BILLS=750 npm run fetch-bills-paginated
 
 ## Automated Jobs vs. Manual Scripts
 
-| Feature             | Manual Scripts            | Automated Jobs (Inngest) |
-| ------------------- | ------------------------- | ------------------------ |
-| **Fetch Bills**     | `npm run fetch-bills`     | Cron: Every 6 hours      |
-| **Summarize Bills** | `npm run summarize-bills` | Cron: Daily at 2 AM      |
-| **Error Handling**  | Basic, fails fast         | Automatic retries        |
-| **Concurrency**     | Sequential                | Parallel processing      |
-| **Best For**        | Testing, one-time loads   | Production, ongoing sync |
+| Feature             | Manual Scripts                   | Automated Jobs (Vercel Workflows & Schedules)                                     |
+| ------------------- | -------------------------------- | --------------------------------------------------------------------------------- |
+| **Fetch Bills**     | `npm run fetch-bills`            | `ingest-legislation` (`src/workflows/ingest-legislation.ts`) — Every 6 hours      |
+| **Fetch EOs**       | `npm run fetch-executive-orders` | `ingest-eo` (`src/workflows/ingest-eo.ts`) — Every 12 hours                       |
+| **Backfill Texts**  | `npm run fetch-bill-texts`       | `update-texts` (`src/workflows/update-texts.ts`) — Every 4 hours                  |
+| **Summarize / Tag** | `npm run summarize-bills`        | `summarize-legislation` (`src/workflows/summarize-legislation.ts`) — Every 20 min |
+| **Error Handling**  | Basic, fails fast                | Durable workflow steps & automatic retries                                        |
+| **Concurrency**     | Sequential                       | Chunked workflow steps & batch LLM routing                                        |
+| **Best For**        | Testing, one-time loads          | Production, ongoing sync                                                          |
 
 ---
 
@@ -939,7 +944,8 @@ TOTAL_BILLS=750 npm run fetch-bills-paginated
 
 ## See Also
 
-- [Inngest Functions](../src/inngest/functions.ts) - Automated job definitions
+- [Vercel Workflows](../src/workflows/) - Durable workflows (`ingest-legislation.ts`, `ingest-eo.ts`, `update-texts.ts`, `summarize-legislation.ts`)
+- [Scheduled Trigger Routes](../src/app/api/schedules/) - Cron endpoints configured in [vercel.json](../vercel.json)
 - [Congress API Client](../src/lib/api/congress.ts) - API wrapper
 - [AI Summarizer](../src/lib/ai/summarizer.ts) - Claude integration
 - [Architecture Doc](../architecture.md) - Full system design

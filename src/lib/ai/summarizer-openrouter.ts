@@ -1,23 +1,44 @@
 /**
  * OpenRouter AI Summarizer
  *
- * Supports multiple free models via OpenRouter:
- * - deepseek: DeepSeek V3.1 (best quality-to-cost ratio)
- * - qwen: Qwen3 235B A22B (fallback if V3.1 unavailable)
- * - gemini: Gemini 2.0 Flash (1M context - can fit entire bill)
- * - mistral: Mistral Small 3.2 (faster, efficient)
+ * Supports paid Flash cascade models and legacy aliases via OpenRouter:
+ * - deepseek-flash: DeepSeek V4.1 Flash (primary paid cascade model)
+ * - mimo-flash: Xiaomi MiMo V2.6 Flash (cascade model 2)
+ * - glm-flash: GLM 5.3 Flash (cascade model 3)
+ * - deepseek / qwen / gemini / mistral: legacy aliases
  */
 
 import OpenAI from "openai";
 import { SUMMARIZATION_PROMPTS } from "./prompts";
 import type { SummaryType } from "@prisma/client";
-
 import { getOpenRouterKeys } from "@/lib/openrouter-keys";
 
-const OPENROUTER_API_KEYS = getOpenRouterKeys(); // will throw if none found
+export interface OpenRouterModelInfo {
+  id: string;
+  name: string;
+  contextWindow: number;
+  description: string;
+}
 
-// Model configurations
-const OPENROUTER_MODELS = {
+export const OPENROUTER_MODELS = {
+  "deepseek-flash": {
+    id: "deepseek/deepseek-v4.1-flash-1017",
+    name: "DeepSeek V4.1 Flash",
+    contextWindow: 163800,
+    description: "Paid low-cost DeepSeek Flash primary model",
+  },
+  "mimo-flash": {
+    id: "xiaomi/mimo-v2.6-flash",
+    name: "Xiaomi MiMo V2.6 Flash",
+    contextWindow: 131072,
+    description: "Paid low-cost MiMo Flash cascade model",
+  },
+  "glm-flash": {
+    id: "z-ai/glm-5.3-flash",
+    name: "GLM 5.3 Flash",
+    contextWindow: 131072,
+    description: "Paid low-cost GLM Flash cascade model",
+  },
   deepseek: {
     id: "deepseek/deepseek-chat-v3.1:free",
     name: "DeepSeek V3.1",
@@ -42,28 +63,103 @@ const OPENROUTER_MODELS = {
     contextWindow: 131072,
     description: "24B params, fast and efficient",
   },
-} as const;
+} as const satisfies Record<string, OpenRouterModelInfo>;
 
 export type OpenRouterModel = keyof typeof OPENROUTER_MODELS;
 
-// Initialize OpenRouter client (uses OpenAI SDK with custom base URL)
-const openrouter = new OpenAI({
-  apiKey:
-    OPENROUTER_API_KEYS.length > 0
-      ? OPENROUTER_API_KEYS[
-          Math.floor(Math.random() * OPENROUTER_API_KEYS.length)
-        ]
-      : undefined,
-  baseURL: "https://openrouter.ai/api/v1",
-});
+const PROVIDER_NAMES = new Set(["openrouter", "openai", "anthropic"]);
+const DEFAULT_OPENROUTER_TIMEOUT_MS = 60_000;
+
+function getOpenRouterTimeoutMs(
+  envObj: Partial<NodeJS.ProcessEnv> = process.env
+): number {
+  const raw = envObj.OPENROUTER_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_OPENROUTER_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_OPENROUTER_TIMEOUT_MS;
+}
+
+function matchModelEntry(
+  model?: string | null
+): { key: string; config: OpenRouterModelInfo } | null {
+  const trimmed = model?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const lowered = trimmed.toLowerCase();
+  if (PROVIDER_NAMES.has(lowered)) {
+    return null;
+  }
+
+  if (lowered in OPENROUTER_MODELS) {
+    return {
+      key: lowered,
+      config: OPENROUTER_MODELS[lowered as OpenRouterModel],
+    };
+  }
+
+  const byId = Object.entries(OPENROUTER_MODELS).find(
+    ([, entry]) => entry.id.toLowerCase() === lowered
+  );
+  if (byId) {
+    return { key: byId[0], config: byId[1] };
+  }
+
+  if (trimmed.includes("/")) {
+    return {
+      key: trimmed,
+      config: {
+        id: trimmed,
+        name: trimmed,
+        contextWindow: 131072,
+        description: "Configured OpenRouter model",
+      },
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Resolves an explicit model name/slug or falls back to `deepseek-flash`
+ * without treating provider names (`"openrouter"`, `"openai"`, `"anthropic"`)
+ * as lookup keys.
+ */
+export function resolveOpenRouterModelEntry(
+  model?: string | null
+): { key: string; config: OpenRouterModelInfo } {
+  return (
+    matchModelEntry(model) ?? {
+      key: "deepseek-flash",
+      config: OPENROUTER_MODELS["deepseek-flash"],
+    }
+  );
+}
+
+/**
+ * Resolves the OpenRouter model configuration from environment variables
+ * (`OPENROUTER_MODEL`, then `AI_MODEL`), ignoring provider strings.
+ */
+export function resolveOpenRouterModelConfig(
+  envObj: Partial<NodeJS.ProcessEnv> = process.env
+): OpenRouterModelInfo {
+  return (
+    matchModelEntry(envObj.OPENROUTER_MODEL)?.config ??
+    matchModelEntry(envObj.AI_MODEL)?.config ??
+    OPENROUTER_MODELS["deepseek-flash"]
+  );
+}
 
 interface GenerateSummaryParams {
   title: string;
   fullText: string;
   summaryType: SummaryType;
-  model?: OpenRouterModel;
+  model?: OpenRouterModel | (string & {});
 }
-// 5,358
+
 interface SummaryResponse {
   content: string;
   keyPoints: string[];
@@ -73,79 +169,105 @@ interface SummaryResponse {
 }
 
 /**
- * Generate summary using OpenRouter models
+ * Generate summary using OpenRouter models with lazy key discovery & rotation.
  */
 export async function generateSummaryOpenRouter({
   title,
   fullText,
   summaryType,
-  model = "qwen",
+  model = "deepseek-flash",
 }: GenerateSummaryParams): Promise<SummaryResponse> {
-  const modelConfig = OPENROUTER_MODELS[model];
+  const { key: resolvedKey, config: modelConfig } =
+    resolveOpenRouterModelEntry(model);
+  const openRouterKeys = getOpenRouterKeys();
 
-  if (OPENROUTER_API_KEYS.length === 0) {
+  if (openRouterKeys.length === 0) {
     throw new Error("OPENROUTER_API_KEY environment variable is not set");
   }
 
-  try {
-    // Get the appropriate prompt template
-    const promptTemplate = SUMMARIZATION_PROMPTS[summaryType];
-    const prompt = promptTemplate
-      .replace("{{TITLE}}", title)
-      .replace("{{FULL_TEXT}}", fullText)
-      .replace("{{BILL_TYPE}}", "")
-      .replace("{{SPONSOR}}", "")
-      .replace("{{STATUS}}", "");
+  const promptTemplate = SUMMARIZATION_PROMPTS[summaryType];
+  const prompt = promptTemplate
+    .replace("{{TITLE}}", title)
+    .replace("{{FULL_TEXT}}", fullText)
+    .replace("{{BILL_TYPE}}", "")
+    .replace("{{SPONSOR}}", "")
+    .replace("{{STATUS}}", "");
 
-    console.log(`   🌐 Using OpenRouter model: ${modelConfig.name}`);
-    console.log(
-      `   📊 Context window: ${modelConfig.contextWindow.toLocaleString()} tokens`
-    );
+  console.log(`   🌐 Using OpenRouter model: ${modelConfig.name}`);
+  console.log(
+    `   📊 Context window: ${modelConfig.contextWindow.toLocaleString()} tokens`
+  );
 
-    const completion = await openrouter.chat.completions.create(
-      {
-        model: modelConfig.id,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a legislative analyst providing clear, accurate summaries of bills.",
-          },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.3,
-        max_tokens: 4000,
-      },
-      {
-        // OpenRouter-specific headers in options
-        headers: {
-          "HTTP-Referer":
-            process.env.SITE_URL || "https://legistrack.vercel.app",
-          "X-Title": "Legislation Tracker - Bill Summarization",
+  let lastError: unknown;
+
+  for (const apiKey of openRouterKeys) {
+    try {
+      const openrouter = new OpenAI({
+        apiKey,
+        baseURL: "https://openrouter.ai/api/v1",
+        maxRetries: 0,
+        timeout: getOpenRouterTimeoutMs(),
+      });
+
+      const completion = await openrouter.chat.completions.create(
+        {
+          model: modelConfig.id,
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are a legislative analyst providing clear, accurate summaries of bills.",
+            },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.3,
+          max_tokens: 4000,
         },
+        {
+          headers: {
+            "HTTP-Referer":
+              process.env.SITE_URL || "https://legistrack.vercel.app",
+            "X-Title": "Legislation Tracker - Bill Summarization",
+          },
+        }
+      );
+
+      const content = completion.choices[0]?.message?.content;
+
+      if (!content) {
+        throw new Error("No content returned from OpenRouter API");
       }
-    );
 
-    const content = completion.choices[0]?.message?.content;
+      const parsed = parseStructuredResponse(content);
 
-    if (!content) {
-      throw new Error("No content returned from OpenRouter API");
+      return {
+        content: parsed.content,
+        keyPoints: parsed.keyPoints,
+        impactAreas: parsed.impactAreas,
+        confidence: parsed.confidence,
+        model: `${modelConfig.name} (${resolvedKey})`,
+      };
+    } catch (error) {
+      lastError = error;
+      const status =
+        typeof error === "object" && error !== null
+          ? (error as { status?: number }).status
+          : undefined;
+      if (
+        status === 401 ||
+        status === 402 ||
+        status === 429 ||
+        (status !== undefined && status >= 500)
+      ) {
+        continue;
+      }
+      console.error(`OpenRouter API error with ${modelConfig.name}:`, error);
+      throw error;
     }
-
-    // Parse the structured response
-    const parsed = parseStructuredResponse(content);
-
-    return {
-      content: parsed.content,
-      keyPoints: parsed.keyPoints,
-      impactAreas: parsed.impactAreas,
-      confidence: parsed.confidence,
-      model: `${modelConfig.name} (${model})`,
-    };
-  } catch (error) {
-    console.error(`OpenRouter API error with ${modelConfig.name}:`, error);
-    throw error;
   }
+
+  console.error(`OpenRouter API error with ${modelConfig.name}:`, lastError);
+  throw lastError;
 }
 
 /**
