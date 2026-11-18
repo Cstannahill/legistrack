@@ -1,6 +1,6 @@
 import {
+  acquireSingletonJobRunStep,
   completeJobRunStep,
-  createJobRunStep,
   failJobRunStep,
   revalidateLegislationPathsStep,
 } from "@/workflows/steps/job-runs";
@@ -19,6 +19,9 @@ export interface SummarizeLegislationWorkflowInput {
 export interface SummarizeWorkflowSummary {
   jobRunId: string;
   executionId?: string;
+  skipped?: boolean;
+  skippedReason?: string;
+  activeJobRunId?: string;
   selectedBills: number;
   selectedExecutiveOrders: number;
   attempted: number;
@@ -32,9 +35,10 @@ export interface SummarizeWorkflowSummary {
 }
 
 /**
- * Durable workflow orchestrator that selects unsummarized or uncategorized
- * bills and executive orders, runs combined or category-only LLM processing,
- * revalidates public pages when changes persist, and tracks `JobRun` status.
+ * Durable workflow orchestrator that acquires a singleton active-run lease,
+ * selects unsummarized or uncategorized bills and executive orders, runs
+ * combined or category-only LLM processing, revalidates public pages when
+ * changes persist, and tracks `JobRun` status.
  */
 export async function summarizeLegislationWorkflow(
   input: SummarizeLegislationWorkflowInput = {}
@@ -52,10 +56,36 @@ export async function summarizeLegislationWorkflow(
     initialMetadata.eoBatchSize = input.eoBatchSize;
   }
 
-  const jobRunId = await createJobRunStep(
+  const lease = await acquireSingletonJobRunStep(
     "summarize-legislation",
     Object.keys(initialMetadata).length > 0 ? initialMetadata : undefined
   );
+
+  if (!lease.acquired) {
+    return {
+      jobRunId: lease.activeJobRunId ?? lease.jobRunId,
+      ...(input.executionId !== undefined
+        ? { executionId: input.executionId }
+        : {}),
+      skipped: true,
+      skippedReason: "active-run-in-progress",
+      ...(lease.activeJobRunId !== undefined
+        ? { activeJobRunId: lease.activeJobRunId }
+        : {}),
+      selectedBills: 0,
+      selectedExecutiveOrders: 0,
+      attempted: 0,
+      persisted: 0,
+      summarized: 0,
+      categorized: 0,
+      failed: 0,
+      deadLettered: 0,
+      revalidated: false,
+      errors: [],
+    };
+  }
+
+  const jobRunId = lease.jobRunId;
 
   try {
     const batch = await selectWorkBatchStep({

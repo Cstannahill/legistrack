@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import {
   categorizeLegislationItem,
   summarizeAndCategorizeItems,
+  truncateForPrompt,
 } from "@/lib/llm/router";
 import {
   FallbackCapReachedError,
@@ -31,6 +32,8 @@ const DEFAULT_BILL_BATCH_SIZE = 5;
 const DEFAULT_EO_BATCH_SIZE = 5;
 const DEFAULT_SUMMARIZE_BATCH_SIZE = 3;
 const DEFAULT_LLM_MAX_ATTEMPTS = 5;
+const DEFAULT_OPENROUTER_MAX_INPUT_CHARS = 120_000;
+const DEFAULT_GEMINI_MAX_INPUT_CHARS = 400_000;
 const MAX_CATEGORIES_PER_ITEM = 3;
 
 export type LegislationKind = "bill" | "executiveOrder";
@@ -43,7 +46,7 @@ export interface SummarizeWorkItem {
   id: string;
   kind: LegislationKind;
   title: string;
-  fullText: string;
+  fullText?: string;
   hasStandardSummary: boolean;
   standardSummaryText: string | null;
   hasCategories: boolean;
@@ -165,14 +168,55 @@ function getDeadLetterTargetWhere(item: SummarizeWorkItem): {
 
 type DbWriteClient = Prisma.TransactionClient;
 
-async function findExistingStandardSummary(
+function getMaxLoadedFullTextChars(): number {
+  return Math.max(
+    parsePositiveInt(
+      process.env.OPENROUTER_MAX_INPUT_CHARS,
+      DEFAULT_OPENROUTER_MAX_INPUT_CHARS
+    ),
+    parsePositiveInt(
+      process.env.GEMINI_MAX_INPUT_CHARS,
+      DEFAULT_GEMINI_MAX_INPUT_CHARS
+    )
+  );
+}
+
+function boundFullText(text: string, maxChars: number): string {
+  if (typeof truncateForPrompt === "function") {
+    return truncateForPrompt(text, maxChars);
+  }
+  return text.length <= maxChars ? text : text.slice(0, maxChars);
+}
+
+async function runInTransaction<T>(
+  callback: (tx: DbWriteClient) => Promise<T>
+): Promise<T> {
+  if (typeof db.$transaction === "function") {
+    return db.$transaction(callback);
+  }
+  return callback(db as unknown as DbWriteClient);
+}
+
+async function acquireItemLock(
+  tx: DbWriteClient,
   item: SummarizeWorkItem
+): Promise<void> {
+  if (typeof tx.$executeRaw !== "function") {
+    return;
+  }
+  const lockNamespace = `summarize:${item.kind}`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockNamespace}), hashtext(${item.id}))`;
+}
+
+async function findExistingStandardSummary(
+  item: SummarizeWorkItem,
+  client: DbWriteClient = db
 ): Promise<{ id: string; content: string } | null> {
-  if (typeof db.summary?.findFirst !== "function") {
+  if (typeof client.summary?.findFirst !== "function") {
     return null;
   }
 
-  const existing = await db.summary.findFirst({
+  const existing = await client.summary.findFirst({
     where: {
       ...getDeadLetterTargetWhere(item),
       summaryType: "STANDARD",
@@ -183,12 +227,34 @@ async function findExistingStandardSummary(
   return existing ?? null;
 }
 
-async function hasLiveCategories(item: SummarizeWorkItem): Promise<boolean> {
+async function hasExistingStandardSummaryInTx(
+  item: SummarizeWorkItem,
+  tx: DbWriteClient
+): Promise<boolean> {
+  if (typeof tx.summary?.findFirst !== "function") {
+    return false;
+  }
+
+  const existing = await tx.summary.findFirst({
+    where: {
+      ...getDeadLetterTargetWhere(item),
+      summaryType: "STANDARD",
+    },
+    select: { id: true },
+  });
+
+  return existing !== null && existing !== undefined;
+}
+
+async function hasLiveCategories(
+  item: SummarizeWorkItem,
+  client: DbWriteClient = db
+): Promise<boolean> {
   if (item.kind === "bill") {
-    if (typeof db.bill?.count !== "function") {
+    if (typeof client.bill?.count !== "function") {
       return item.hasCategories;
     }
-    const count = await db.bill.count({
+    const count = await client.bill.count({
       where: {
         id: item.id,
         categories: { some: {} },
@@ -197,16 +263,34 @@ async function hasLiveCategories(item: SummarizeWorkItem): Promise<boolean> {
     return typeof count === "number" ? count > 0 : item.hasCategories;
   }
 
-  if (typeof db.executiveOrder?.count !== "function") {
+  if (typeof client.executiveOrder?.count !== "function") {
     return item.hasCategories;
   }
-  const count = await db.executiveOrder.count({
+  const count = await client.executiveOrder.count({
     where: {
       id: item.id,
       categories: { some: {} },
     },
   });
   return typeof count === "number" ? count > 0 : item.hasCategories;
+}
+
+async function getLiveCategoryCount(
+  item: SummarizeWorkItem,
+  client: DbWriteClient = db
+): Promise<number> {
+  if (typeof client.category?.count === "function") {
+    const count = await client.category.count({
+      where:
+        item.kind === "bill"
+          ? { bills: { some: { id: item.id } } }
+          : { executiveOrders: { some: { id: item.id } } },
+    });
+    return typeof count === "number" ? count : 0;
+  }
+
+  const exists = await hasLiveCategories(item, client);
+  return exists ? MAX_CATEGORIES_PER_ITEM : 0;
 }
 
 async function connectItemCategories(
@@ -321,13 +405,29 @@ async function recordDeadLetterAttempt(
 async function markDeadLetterProcessedIfAny(
   item: SummarizeWorkItem
 ): Promise<void> {
+  const targetWhere = getDeadLetterTargetWhere(item);
+
+  if (typeof db.deadLetter?.updateMany === "function") {
+    await db.deadLetter.updateMany({
+      where: {
+        ...targetWhere,
+        processed: false,
+      },
+      data: {
+        processed: true,
+        processedAt: new Date(),
+      },
+    });
+    return;
+  }
+
   if (typeof db.deadLetter?.findFirst !== "function") {
     return;
   }
 
   const existing = await db.deadLetter.findFirst({
     where: {
-      ...getDeadLetterTargetWhere(item),
+      ...targetWhere,
       processed: false,
     },
     orderBy: { createdAt: "desc" },
@@ -441,15 +541,48 @@ async function persistCombinedOutcome(
     ? []
     : resolveCategoryConnectIds(parsed.data.categories, categories);
 
-  let appliedCategories = false;
+  let txResult: {
+    wroteSummary: boolean;
+    wroteCategories: boolean;
+    alreadyPersisted: boolean;
+  };
   try {
-    appliedCategories = await db.$transaction(async (tx) => {
-      await createStandardSummaryRow(tx, item, summaryData);
-      if (connectIds.length > 0) {
-        await connectItemCategories(item, connectIds, tx);
-        return true;
+    txResult = await runInTransaction(async (tx) => {
+      await acquireItemLock(tx, item);
+
+      const [existingSummary, liveCategoryCount] = await Promise.all([
+        hasExistingStandardSummaryInTx(item, tx),
+        getLiveCategoryCount(item, tx),
+      ]);
+
+      let wroteSummary = false;
+      if (!existingSummary) {
+        await createStandardSummaryRow(tx, item, summaryData);
+        wroteSummary = true;
       }
-      return false;
+
+      const remainingSlots = Math.max(
+        0,
+        MAX_CATEGORIES_PER_ITEM - liveCategoryCount
+      );
+      const txConnectIds =
+        liveCategoryCount === 0 && remainingSlots > 0
+          ? connectIds.slice(0, remainingSlots)
+          : [];
+
+      let wroteCategories = false;
+      if (txConnectIds.length > 0) {
+        await connectItemCategories(item, txConnectIds, tx);
+        wroteCategories = true;
+      }
+
+      return {
+        wroteSummary,
+        wroteCategories,
+        alreadyPersisted:
+          existingSummary &&
+          (liveCategoryCount > 0 || item.hasCategories || connectIds.length === 0),
+      };
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -457,13 +590,25 @@ async function persistCombinedOutcome(
     return;
   }
 
-  outcomeCounters.summarized += 1;
-  if (appliedCategories) {
+  if (txResult.wroteSummary) {
+    outcomeCounters.summarized += 1;
+  }
+  if (txResult.wroteCategories) {
     outcomeCounters.categorized += 1;
   }
-  outcomeCounters.persisted += 1;
+  if (
+    txResult.wroteSummary ||
+    txResult.wroteCategories ||
+    txResult.alreadyPersisted
+  ) {
+    outcomeCounters.persisted += 1;
+  }
 
-  if (appliedCategories || item.hasCategories) {
+  if (
+    txResult.wroteCategories ||
+    item.hasCategories ||
+    txResult.alreadyPersisted
+  ) {
     await markDeadLetterProcessedSafely(item);
   }
 }
@@ -473,6 +618,15 @@ async function processSingleSummarizeItem(
   categories: CategoryChoice[],
   outcomeCounters: SummarizeBatchOutcome
 ): Promise<void> {
+  if (typeof item.fullText !== "string" || item.fullText.trim().length === 0) {
+    await recordItemFailure(
+      item,
+      "Missing fullText in database for summarization",
+      outcomeCounters
+    );
+    return;
+  }
+
   const input: LlmLegislationInput = {
     id: item.id,
     title: item.title,
@@ -511,10 +665,31 @@ async function processSummarizeChunk(
     return;
   }
 
-  const inputs: LlmLegislationInput[] = chunk.map((item) => ({
+  const validChunk: SummarizeWorkItem[] = [];
+  for (const item of chunk) {
+    if (typeof item.fullText !== "string" || item.fullText.trim().length === 0) {
+      await recordItemFailure(
+        item,
+        "Missing fullText in database for summarization",
+        outcomeCounters
+      );
+      continue;
+    }
+    validChunk.push(item);
+  }
+
+  if (validChunk.length === 0) {
+    return;
+  }
+  if (validChunk.length === 1) {
+    await processSingleSummarizeItem(validChunk[0], categories, outcomeCounters);
+    return;
+  }
+
+  const inputs: LlmLegislationInput[] = validChunk.map((item) => ({
     id: item.id,
     title: item.title,
-    text: item.fullText,
+    text: item.fullText ?? "",
     kind: item.kind,
   }));
 
@@ -527,14 +702,14 @@ async function processSummarizeChunk(
     }
 
     // Isolate failures across sibling items if batch call threw unexpectedly
-    for (const item of chunk) {
+    for (const item of validChunk) {
       await processSingleSummarizeItem(item, categories, outcomeCounters);
     }
     return;
   }
 
   const byId = new Map(outcomes.map((o) => [o.id, o]));
-  for (const item of chunk) {
+  for (const item of validChunk) {
     await persistCombinedOutcome(
       item,
       byId.get(item.id),
@@ -597,15 +772,26 @@ async function processCategoriesOnlyItem(
     return;
   }
 
+  let wroteCategories = false;
   try {
-    await connectItemCategories(item, connectIds);
+    wroteCategories = await runInTransaction(async (tx) => {
+      await acquireItemLock(tx, item);
+      const liveCategoryCount = await getLiveCategoryCount(item, tx);
+      if (liveCategoryCount > 0) {
+        return false;
+      }
+      await connectItemCategories(item, connectIds, tx);
+      return true;
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await recordItemFailure(item, message, outcomeCounters);
     return;
   }
 
-  outcomeCounters.categorized += 1;
+  if (wroteCategories) {
+    outcomeCounters.categorized += 1;
+  }
   outcomeCounters.persisted += 1;
   await markDeadLetterProcessedSafely(item);
 }
@@ -714,7 +900,6 @@ export async function selectWorkBatchStep(
       id: eo.id,
       kind: "executiveOrder",
       title: eo.title,
-      fullText: eo.fullText,
       hasStandardSummary: (eo.summaries?.length ?? 0) > 0,
       standardSummaryText: eo.summaries?.[0]?.content ?? null,
       hasCategories: (eo.categories?.length ?? 0) > 0,
@@ -763,7 +948,6 @@ export async function selectWorkBatchStep(
         id: bill.id,
         kind: "bill",
         title: bill.title || bill.shortTitle || fallbackTitle,
-        fullText: bill.fullText,
         hasStandardSummary: (bill.summaries?.length ?? 0) > 0,
         standardSummaryText: bill.summaries?.[0]?.content ?? null,
         hasCategories: (bill.categories?.length ?? 0) > 0,
@@ -776,6 +960,69 @@ export async function selectWorkBatchStep(
     billCount: validBillItems.length,
     executiveOrderCount: validEoItems.length,
   };
+}
+
+async function loadBoundedFullTextForItems(
+  items: SummarizeWorkItem[]
+): Promise<SummarizeWorkItem[]> {
+  const missingItems = items.filter(
+    (item) => typeof item.fullText !== "string" || item.fullText.trim().length === 0
+  );
+  if (missingItems.length === 0) {
+    return items;
+  }
+
+  const maxChars = getMaxLoadedFullTextChars();
+  const billIds = missingItems
+    .filter((item) => item.kind === "bill")
+    .map((item) => item.id);
+  const eoIds = missingItems
+    .filter((item) => item.kind === "executiveOrder")
+    .map((item) => item.id);
+
+  const [billTextRows, eoTextRows] = await Promise.all([
+    billIds.length > 0 && typeof db.bill?.findMany === "function"
+      ? db.bill.findMany({
+          where: { id: { in: billIds } },
+          select: { id: true, fullText: true },
+        })
+      : Promise.resolve([]),
+    eoIds.length > 0 && typeof db.executiveOrder?.findMany === "function"
+      ? db.executiveOrder.findMany({
+          where: { id: { in: eoIds } },
+          select: { id: true, fullText: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const billTextById = new Map<string, string>();
+  for (const row of billTextRows ?? []) {
+    if (typeof row.fullText === "string" && row.fullText.trim().length > 0) {
+      billTextById.set(row.id, boundFullText(row.fullText, maxChars));
+    }
+  }
+
+  const eoTextById = new Map<string, string>();
+  for (const row of eoTextRows ?? []) {
+    if (typeof row.fullText === "string" && row.fullText.trim().length > 0) {
+      eoTextById.set(row.id, boundFullText(row.fullText, maxChars));
+    }
+  }
+
+  return items.map((item) => {
+    if (typeof item.fullText === "string" && item.fullText.trim().length > 0) {
+      return {
+        ...item,
+        fullText: boundFullText(item.fullText, maxChars),
+      };
+    }
+
+    const loaded =
+      item.kind === "bill"
+        ? billTextById.get(item.id)
+        : eoTextById.get(item.id);
+    return loaded ? { ...item, fullText: loaded } : item;
+  });
 }
 
 /**
@@ -846,12 +1093,15 @@ export async function processSummaryBatchStep(
     }
   }
 
+  const hydratedSummaryItems =
+    await loadBoundedFullTextForItems(needsSummaryItems);
+
   const chunkSize = parsePositiveInt(
     process.env.SUMMARIZE_BATCH_SIZE,
     DEFAULT_SUMMARIZE_BATCH_SIZE
   );
 
-  for (const chunk of chunkArray(needsSummaryItems, chunkSize)) {
+  for (const chunk of chunkArray(hydratedSummaryItems, chunkSize)) {
     await processSummarizeChunk(chunk, batch.categories, outcomeCounters);
   }
 

@@ -402,6 +402,7 @@ async function runOpenRouterCascade<T>(opts: {
         continue;
       }
 
+      let isOutputOrParseError = false;
       try {
         const client = createOpenRouterClient(apiKey);
         const completion = await client.chat.completions.create({
@@ -412,6 +413,7 @@ async function runOpenRouterCascade<T>(opts: {
           response_format: { type: "json_object" },
         });
 
+        isOutputOrParseError = true;
         const content = completion.choices?.[0]?.message?.content;
         if (!content || !content.trim()) {
           throw new Error(`OpenRouter model "${model}" returned empty content`);
@@ -421,11 +423,19 @@ async function runOpenRouterCascade<T>(opts: {
         return { ok: true, data, model };
       } catch (err) {
         errors.push(err);
-        if (err instanceof BatchOutputMalformedError) {
-          return { ok: false, errors };
-        }
-        const classification = classifyOpenRouterError(err);
         const errTime = Date.now();
+
+        if (isOutputOrParseError) {
+          if (
+            opts.cooldownOnParseFailure ||
+            err instanceof BatchOutputMalformedError
+          ) {
+            cooldownPair(apiKey, model, PAIR_TRANSIENT_COOLDOWN_MS, errTime);
+          }
+          continue;
+        }
+
+        const classification = classifyOpenRouterError(err);
 
         if (classification === "key_disabled") {
           const status = getErrorStatus(err);
@@ -448,10 +458,8 @@ async function runOpenRouterCascade<T>(opts: {
           continue;
         }
 
-        // Transient error or parse/validation error
-        if (opts.cooldownOnParseFailure || getErrorStatus(err) !== undefined) {
-          cooldownPair(apiKey, model, PAIR_TRANSIENT_COOLDOWN_MS, errTime);
-        }
+        // Transient 5xx or unstatused network/timeout error (e.g. APIConnectionError, ETIMEDOUT)
+        cooldownPair(apiKey, model, PAIR_TRANSIENT_COOLDOWN_MS, errTime);
       }
     }
   }
@@ -466,9 +474,108 @@ class BatchOutputMalformedError extends Error {
   }
 }
 
-async function summarizeAndCategorizeSingle(
+async function callGeminiSingle(
   item: LlmLegislationInput,
   categories: LlmCategoryInput[]
+): Promise<LlmBatchItemOutcome> {
+  try {
+    const geminiPrompt = buildSingleSummaryPrompt(
+      item,
+      categories,
+      getGeminiMaxInputChars()
+    );
+    const geminiResult = await callGeminiStructured({
+      systemInstruction: SUMMARY_SYSTEM_INSTRUCTION,
+      prompt: geminiPrompt,
+      schema: SummaryAndCategoryItemSchema,
+      jsonSchema: toJsonSchema(SummaryAndCategoryItemSchema),
+      itemIds: [item.id],
+    });
+
+    return {
+      id: item.id,
+      ok: true,
+      summary: geminiResult.data.summary,
+      keyPoints: geminiResult.data.keyPoints,
+      impactAreas: geminiResult.data.impactAreas,
+      categories: normalizeCategorySlugs(
+        geminiResult.data.categories,
+        categories
+      ),
+      confidence: geminiResult.data.confidence ?? null,
+      aiModel: GEMINI_FALLBACK_MODEL,
+    };
+  } catch (err) {
+    if (err instanceof FallbackCapReachedError) {
+      throw err;
+    }
+    return {
+      id: item.id,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function callGeminiBatch(
+  items: LlmLegislationInput[],
+  categories: LlmCategoryInput[]
+): Promise<LlmBatchItemOutcome[]> {
+  try {
+    const geminiBatchPrompt = buildBatchSummaryPrompt(
+      items,
+      categories,
+      getGeminiMaxInputChars()
+    );
+    const geminiResult = await callGeminiStructured({
+      systemInstruction: SUMMARY_SYSTEM_INSTRUCTION,
+      prompt: geminiBatchPrompt,
+      schema: SummaryAndCategoryBatchSchema,
+      jsonSchema: toJsonSchema(SummaryAndCategoryBatchSchema),
+      itemIds: items.map((i) => i.id),
+    });
+
+    const byId = new Map<string, LlmBatchItemOutcome>();
+    for (const parsed of geminiResult.data.items) {
+      if (!byId.has(parsed.id)) {
+        byId.set(parsed.id, {
+          id: parsed.id,
+          ok: true,
+          summary: parsed.summary,
+          keyPoints: parsed.keyPoints,
+          impactAreas: parsed.impactAreas,
+          categories: normalizeCategorySlugs(parsed.categories, categories),
+          confidence: parsed.confidence ?? null,
+          aiModel: GEMINI_FALLBACK_MODEL,
+        });
+      }
+    }
+
+    return items.map(
+      (item) =>
+        byId.get(item.id) ?? {
+          id: item.id,
+          ok: false,
+          error: "Gemini batch response omitted item",
+        }
+    );
+  } catch (err) {
+    if (err instanceof FallbackCapReachedError) {
+      throw err;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return items.map((item) => ({
+      id: item.id,
+      ok: false,
+      error: message,
+    }));
+  }
+}
+
+async function summarizeAndCategorizeSingle(
+  item: LlmLegislationInput,
+  categories: LlmCategoryInput[],
+  opts?: { allowGeminiFallback?: boolean }
 ): Promise<LlmBatchItemOutcome> {
   const openRouterPrompt = buildSingleSummaryPrompt(
     item,
@@ -507,43 +614,20 @@ async function summarizeAndCategorizeSingle(
     };
   }
 
-  try {
-    const geminiPrompt = buildSingleSummaryPrompt(
-      item,
-      categories,
-      getGeminiMaxInputChars()
-    );
-    const geminiResult = await callGeminiStructured({
-      systemInstruction: SUMMARY_SYSTEM_INSTRUCTION,
-      prompt: geminiPrompt,
-      schema: SummaryAndCategoryItemSchema,
-      jsonSchema: toJsonSchema(SummaryAndCategoryItemSchema),
-      itemIds: [item.id],
-    });
-
-    return {
-      id: item.id,
-      ok: true,
-      summary: geminiResult.data.summary,
-      keyPoints: geminiResult.data.keyPoints,
-      impactAreas: geminiResult.data.impactAreas,
-      categories: normalizeCategorySlugs(
-        geminiResult.data.categories,
-        categories
-      ),
-      confidence: geminiResult.data.confidence ?? null,
-      aiModel: GEMINI_FALLBACK_MODEL,
-    };
-  } catch (err) {
-    if (err instanceof FallbackCapReachedError) {
-      throw err;
-    }
+  if (opts?.allowGeminiFallback === false) {
+    const lastErr =
+      openRouterAttempt.errors[openRouterAttempt.errors.length - 1];
     return {
       id: item.id,
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error:
+        lastErr instanceof Error
+          ? lastErr.message
+          : "OpenRouter summarization failed",
     };
   }
+
+  return callGeminiSingle(item, categories);
 }
 
 function extractValidBatchOutcomes(
@@ -600,13 +684,20 @@ function extractValidBatchOutcomes(
     });
   }
 
+  if (accepted.size === 0) {
+    throw new BatchOutputMalformedError(
+      `Batch response from ${model} yielded no valid item outcomes`
+    );
+  }
+
   return accepted;
 }
 
 /**
  * Summarizes and categorizes one or more legislative items using the ordered
- * OpenRouter paid Flash cascade first, recovering partial/malformed batch items
- * individually before falling back to guarded direct Gemini 3.8 Flash.
+ * OpenRouter paid Flash cascade first, recovering missing or invalid batch items
+ * individually via OpenRouter before falling back to a single guarded Gemini
+ * 3.8 Flash call for all remaining items.
  */
 export async function summarizeAndCategorizeItems(
   items: LlmLegislationInput[],
@@ -626,7 +717,6 @@ export async function summarizeAndCategorizeItems(
     getOpenRouterMaxInputChars()
   );
 
-  let batchParseMalformed = false;
   const openRouterBatch = await runOpenRouterCascade<
     Map<string, LlmBatchItemOutcome>
   >({
@@ -634,91 +724,45 @@ export async function summarizeAndCategorizeItems(
     prompt: batchPrompt,
     maxTokens: Math.min(8000, 1500 * items.length),
     cooldownOnParseFailure: false,
-    parseOutput: (rawContent, model) => {
-      try {
-        return extractValidBatchOutcomes(rawContent, items, categories, model);
-      } catch (err) {
-        if (err instanceof BatchOutputMalformedError) {
-          batchParseMalformed = true;
-        }
-        throw err;
-      }
-    },
+    parseOutput: (rawContent, model) =>
+      extractValidBatchOutcomes(rawContent, items, categories, model),
   });
 
-  if (openRouterBatch.ok) {
-    const accepted = openRouterBatch.data;
-    const missingItems = items.filter((item) => !accepted.has(item.id));
-    for (const missingItem of missingItems) {
-      const recovered = await summarizeAndCategorizeSingle(
-        missingItem,
-        categories
-      );
+  const accepted = openRouterBatch.ok
+    ? openRouterBatch.data
+    : new Map<string, LlmBatchItemOutcome>();
+
+  const missingAfterBatch = items.filter((item) => !accepted.has(item.id));
+  for (const missingItem of missingAfterBatch) {
+    const recovered = await summarizeAndCategorizeSingle(
+      missingItem,
+      categories,
+      { allowGeminiFallback: false }
+    );
+    if (recovered.ok) {
       accepted.set(missingItem.id, recovered);
     }
-    return items.map((item) => accepted.get(item.id)!);
   }
 
-  // If the batch call got an HTTP 200 response whose JSON was unparseable,
-  // retry items individually via OpenRouter first before spending Gemini fallback.
-  if (batchParseMalformed) {
-    const outcomes: LlmBatchItemOutcome[] = [];
-    for (const item of items) {
-      outcomes.push(await summarizeAndCategorizeSingle(item, categories));
+  const stillMissing = items.filter((item) => !accepted.has(item.id));
+  if (stillMissing.length > 0) {
+    const geminiOutcomes =
+      stillMissing.length === 1
+        ? [await callGeminiSingle(stillMissing[0], categories)]
+        : await callGeminiBatch(stillMissing, categories);
+    for (const outcome of geminiOutcomes) {
+      accepted.set(outcome.id, outcome);
     }
-    return outcomes;
   }
 
-  // All OpenRouter models/keys failed at the API level -> single guarded Gemini batch fallback
-  try {
-    const geminiBatchPrompt = buildBatchSummaryPrompt(
-      items,
-      categories,
-      getGeminiMaxInputChars()
-    );
-    const geminiResult = await callGeminiStructured({
-      systemInstruction: SUMMARY_SYSTEM_INSTRUCTION,
-      prompt: geminiBatchPrompt,
-      schema: SummaryAndCategoryBatchSchema,
-      jsonSchema: toJsonSchema(SummaryAndCategoryBatchSchema),
-      itemIds: items.map((i) => i.id),
-    });
-
-    const byId = new Map<string, LlmBatchItemOutcome>();
-    for (const parsed of geminiResult.data.items) {
-      if (!byId.has(parsed.id)) {
-        byId.set(parsed.id, {
-          id: parsed.id,
-          ok: true,
-          summary: parsed.summary,
-          keyPoints: parsed.keyPoints,
-          impactAreas: parsed.impactAreas,
-          categories: normalizeCategorySlugs(parsed.categories, categories),
-          confidence: parsed.confidence ?? null,
-          aiModel: GEMINI_FALLBACK_MODEL,
-        });
+  return items.map(
+    (item) =>
+      accepted.get(item.id) ?? {
+        id: item.id,
+        ok: false,
+        error: "LLM response omitted item",
       }
-    }
-
-    return items.map(
-      (item) =>
-        byId.get(item.id) ?? {
-          id: item.id,
-          ok: false,
-          error: "Gemini batch response omitted item",
-        }
-    );
-  } catch (err) {
-    if (err instanceof FallbackCapReachedError) {
-      throw err;
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    return items.map((item) => ({
-      id: item.id,
-      ok: false,
-      error: message,
-    }));
-  }
+  );
 }
 
 /**

@@ -444,6 +444,7 @@ describe("Gemini fallback quota & direct interactions adapter", () => {
 
     expect(mockGenAi.GoogleGenAI).toHaveBeenCalledWith({
       apiKey: "test-gemini-key",
+      httpOptions: { timeout: 60_000 },
     });
 
     expect(mockGenAi.__mockCreate).toHaveBeenCalledWith({
@@ -575,5 +576,39 @@ describe("Gemini fallback quota & direct interactions adapter", () => {
         error: "Gemini 503 unavailable",
       }),
     });
+  });
+
+  it("configures GoogleGenAI httpOptions.timeout from GEMINI_TIMEOUT_MS and falls back to 60000ms on invalid/non-positive values", async () => {
+    for (const [envValue, expectedTimeout] of [
+      ["45000", 45_000],
+      ["0", 60_000],
+      ["-500", 60_000],
+      ["not-a-number", 60_000],
+    ] as const) {
+      mockGenAi.GoogleGenAI.mockClear();
+      process.env.GEMINI_TIMEOUT_MS = envValue;
+      mockDb.__tx.$executeRaw.mockResolvedValueOnce(1);
+      mockDb.__tx.jobRun.count.mockResolvedValueOnce(0);
+      mockDb.__tx.jobRun.create.mockResolvedValueOnce({ id: `job-run-to-${envValue}` });
+      mockDb.jobRun.update.mockResolvedValueOnce({ id: `job-run-to-${envValue}` });
+      mockGenAi.__mockCreate.mockResolvedValueOnce({
+        id: `interaction-to-${envValue}`,
+        status: "completed",
+        output_text: JSON.stringify({ categories: ["healthcare"] }),
+      });
+
+      await callGeminiStructured({
+        systemInstruction: "Categorize.",
+        prompt: "Prompt",
+        schema: CategorizeOnlySchema,
+        jsonSchema: toJsonSchema(CategorizeOnlySchema),
+        itemIds: ["bill-timeout"],
+      });
+
+      expect(mockGenAi.GoogleGenAI).toHaveBeenCalledWith({
+        apiKey: "test-gemini-key",
+        httpOptions: { timeout: expectedTimeout },
+      });
+    }
   });
 });

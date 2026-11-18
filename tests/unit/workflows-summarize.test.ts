@@ -47,16 +47,23 @@ jest.mock("next/cache", () => ({
   revalidatePath: jest.fn(),
 }));
 
-jest.mock("@/lib/llm/router", () => ({
-  summarizeAndCategorizeItems: jest.fn(),
-  categorizeLegislationItem: jest.fn(),
-}));
+jest.mock("@/lib/llm/router", () => {
+  const actual =
+    jest.requireActual<typeof import("@/lib/llm/router")>("@/lib/llm/router");
+  return {
+    summarizeAndCategorizeItems: jest.fn(),
+    categorizeLegislationItem: jest.fn(),
+    truncateForPrompt: actual.truncateForPrompt,
+  };
+});
 
 jest.mock("@/lib/db", () => ({
   db: {
     $transaction: jest.fn(),
+    $executeRaw: jest.fn(),
     category: {
       findMany: jest.fn(),
+      count: jest.fn(),
     },
     bill: {
       findMany: jest.fn(),
@@ -77,17 +84,21 @@ jest.mock("@/lib/db", () => ({
       findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     jobRun: {
+      findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
   },
 }));
 
 interface MockDb {
   $transaction: jest.Mock;
-  category: { findMany: jest.Mock };
+  $executeRaw: jest.Mock;
+  category: { findMany: jest.Mock; count: jest.Mock };
   bill: { findMany: jest.Mock; count: jest.Mock; update: jest.Mock };
   executiveOrder: { findMany: jest.Mock; count: jest.Mock; update: jest.Mock };
   summary: { findFirst: jest.Mock; create: jest.Mock };
@@ -96,8 +107,14 @@ interface MockDb {
     findFirst: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
   };
-  jobRun: { create: jest.Mock; update: jest.Mock };
+  jobRun: {
+    findFirst: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+    updateMany: jest.Mock;
+  };
 }
 
 const { db: mockDb } = jest.requireMock("@/lib/db") as { db: MockDb };
@@ -149,22 +166,29 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
     jest.spyOn(console, "warn").mockImplementation(() => {});
     jest.spyOn(console, "error").mockImplementation(() => {});
 
-    mockDb.$transaction.mockImplementation(
+    mockDb.$transaction.mockReset().mockImplementation(
       async (callback: (tx: MockDb) => Promise<unknown>) => callback(mockDb)
     );
-    mockDb.category.findMany.mockResolvedValue(DYNAMIC_CATEGORIES);
-    mockDb.deadLetter.findMany.mockResolvedValue([]);
-    mockDb.deadLetter.findFirst.mockResolvedValue(null);
-    mockDb.deadLetter.create.mockResolvedValue({ id: "dl-created" });
-    mockDb.deadLetter.update.mockResolvedValue({ id: "dl-updated" });
-    mockDb.summary.findFirst.mockResolvedValue(null);
-    mockDb.summary.create.mockResolvedValue({ id: "sum-created" });
-    mockDb.bill.count.mockResolvedValue(0);
-    mockDb.bill.update.mockResolvedValue({ id: "bill-updated" });
-    mockDb.executiveOrder.count.mockResolvedValue(0);
-    mockDb.executiveOrder.update.mockResolvedValue({ id: "eo-updated" });
-    mockDb.jobRun.create.mockResolvedValue({ id: "jr-1" });
-    mockDb.jobRun.update.mockResolvedValue({ id: "jr-1" });
+    mockDb.$executeRaw.mockReset().mockResolvedValue(1);
+    mockDb.category.findMany.mockReset().mockResolvedValue(DYNAMIC_CATEGORIES);
+    mockDb.category.count.mockReset().mockResolvedValue(0);
+    mockDb.deadLetter.findMany.mockReset().mockResolvedValue([]);
+    mockDb.deadLetter.findFirst.mockReset().mockResolvedValue(null);
+    mockDb.deadLetter.create.mockReset().mockResolvedValue({ id: "dl-created" });
+    mockDb.deadLetter.update.mockReset().mockResolvedValue({ id: "dl-updated" });
+    mockDb.deadLetter.updateMany.mockReset().mockResolvedValue({ count: 0 });
+    mockDb.summary.findFirst.mockReset().mockResolvedValue(null);
+    mockDb.summary.create.mockReset().mockResolvedValue({ id: "sum-created" });
+    mockDb.bill.findMany.mockReset().mockResolvedValue([]);
+    mockDb.bill.count.mockReset().mockResolvedValue(0);
+    mockDb.bill.update.mockReset().mockResolvedValue({ id: "bill-updated" });
+    mockDb.executiveOrder.findMany.mockReset().mockResolvedValue([]);
+    mockDb.executiveOrder.count.mockReset().mockResolvedValue(0);
+    mockDb.executiveOrder.update.mockReset().mockResolvedValue({ id: "eo-updated" });
+    mockDb.jobRun.findFirst.mockReset().mockResolvedValue(null);
+    mockDb.jobRun.create.mockReset().mockResolvedValue({ id: "jr-1" });
+    mockDb.jobRun.update.mockReset().mockResolvedValue({ id: "jr-1" });
+    mockDb.jobRun.updateMany.mockReset().mockResolvedValue({ count: 0 });
   });
 
   afterEach(() => {
@@ -300,6 +324,10 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
         standardSummaryText: VALID_SUMMARY,
         hasCategories: false,
       });
+      for (const selectedItem of batch.items) {
+        expect("fullText" in selectedItem).toBe(false);
+        expect(selectedItem.fullText).toBeUndefined();
+      }
     });
 
     it("defaults LLM_MAX_ATTEMPTS to 5 and respects custom billBatchSize / eoBatchSize", async () => {
@@ -860,11 +888,8 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
       expect(mockDb.deadLetter.create).not.toHaveBeenCalled();
     });
 
-    it("marks a previously unprocessed DeadLetter row as processed when recovery succeeds", async () => {
-      mockDb.deadLetter.findFirst.mockResolvedValueOnce({
-        id: "dl-recovered",
-        attempts: 2,
-      });
+    it("marks all unprocessed DeadLetter rows for an item as processed when recovery succeeds", async () => {
+      mockDb.deadLetter.updateMany.mockResolvedValueOnce({ count: 2 });
 
       const batch: SummarizeWorkBatch = {
         categories: DYNAMIC_CATEGORIES,
@@ -899,8 +924,8 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
       const outcome = await processSummaryBatchStep(batch);
 
       expect(outcome.persisted).toBe(1);
-      expect(mockDb.deadLetter.update).toHaveBeenCalledWith({
-        where: { id: "dl-recovered" },
+      expect(mockDb.deadLetter.updateMany).toHaveBeenCalledWith({
+        where: { billId: "bill-recovered", processed: false },
         data: {
           processed: true,
           processedAt: expect.any(Date),
@@ -1007,9 +1032,9 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
       });
       mockDb.bill.count.mockResolvedValueOnce(2);
       mockDb.executiveOrder.count.mockResolvedValueOnce(1);
-      mockDb.deadLetter.findFirst
-        .mockResolvedValueOnce({ id: "dl-bill-retry-done", attempts: 1 })
-        .mockResolvedValueOnce({ id: "dl-eo-retry-done", attempts: 1 });
+      mockDb.deadLetter.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 1 });
 
       const batch: SummarizeWorkBatch = {
         categories: DYNAMIC_CATEGORIES,
@@ -1044,13 +1069,13 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
       expect(mockDb.summary.create).not.toHaveBeenCalled();
       expect(mockDb.bill.update).not.toHaveBeenCalled();
       expect(mockDb.executiveOrder.update).not.toHaveBeenCalled();
-      expect(mockDb.deadLetter.update).toHaveBeenCalledTimes(2);
-      expect(mockDb.deadLetter.update).toHaveBeenNthCalledWith(1, {
-        where: { id: "dl-bill-retry-done" },
+      expect(mockDb.deadLetter.updateMany).toHaveBeenCalledTimes(2);
+      expect(mockDb.deadLetter.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { billId: "bill-retry-both", processed: false },
         data: { processed: true, processedAt: expect.any(Date) },
       });
-      expect(mockDb.deadLetter.update).toHaveBeenNthCalledWith(2, {
-        where: { id: "dl-eo-retry-done" },
+      expect(mockDb.deadLetter.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { executiveOrderId: "eo-retry-cats", processed: false },
         data: { processed: true, processedAt: expect.any(Date) },
       });
       expect(outcome).toEqual({
@@ -1065,10 +1090,7 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
     });
 
     it("isolates DeadLetter cleanup errors after persistence so persisted items are never double-counted as failed", async () => {
-      mockDb.deadLetter.findFirst
-        .mockResolvedValueOnce({ id: "dl-cleanup-fail-1", attempts: 1 })
-        .mockResolvedValueOnce({ id: "dl-cleanup-fail-2", attempts: 1 });
-      mockDb.deadLetter.update
+      mockDb.deadLetter.updateMany
         .mockRejectedValueOnce(new Error("DeadLetter row lock timeout"))
         .mockRejectedValueOnce(new Error("DeadLetter row lock timeout"));
 
@@ -1231,6 +1253,209 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
         }),
       });
     });
+
+    it("acquires per-item advisory lock and skips duplicate Summary/category writes inside $transaction when a concurrent worker already persisted them", async () => {
+      const mockTx = {
+        $executeRaw: jest.fn().mockResolvedValue(1),
+        summary: {
+          findFirst: jest.fn().mockResolvedValueOnce({ id: "sum-concurrent" }),
+          create: jest.fn(),
+        },
+        category: {
+          count: jest.fn().mockResolvedValueOnce(3),
+        },
+        bill: {
+          update: jest.fn(),
+        },
+        executiveOrder: {
+          update: jest.fn(),
+        },
+      };
+
+      mockDb.$transaction.mockImplementationOnce(
+        async (callback: (tx: typeof mockTx) => Promise<unknown>) =>
+          callback(mockTx)
+      );
+
+      const batch: SummarizeWorkBatch = {
+        categories: DYNAMIC_CATEGORIES,
+        billCount: 1,
+        executiveOrderCount: 0,
+        items: [
+          {
+            id: "bill-race-1",
+            kind: "bill",
+            title: "Concurrent Race Bill",
+            fullText: "Bill text ".repeat(20),
+            hasStandardSummary: false,
+            standardSummaryText: null,
+            hasCategories: false,
+          },
+        ],
+      };
+
+      mockSummarizeAndCategorizeItems.mockResolvedValueOnce([
+        {
+          id: "bill-race-1",
+          ok: true,
+          summary: VALID_SUMMARY,
+          keyPoints: ["Concurrent point."],
+          impactAreas: ["Public"],
+          categories: ["infrastructure", "healthcare"],
+          confidence: 0.9,
+          aiModel: "deepseek/deepseek-v4.1-flash-1017",
+        },
+      ]);
+
+      const outcome = await processSummaryBatchStep(batch);
+
+      expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
+      const lockSql = (
+        mockTx.$executeRaw.mock.calls[0][0] as TemplateStringsArray
+      ).join("");
+      expect(lockSql).toContain("pg_advisory_xact_lock");
+      expect(mockTx.summary.findFirst).toHaveBeenCalledWith({
+        where: { billId: "bill-race-1", summaryType: "STANDARD" },
+        select: { id: true },
+      });
+      expect(mockTx.category.count).toHaveBeenCalledWith({
+        where: { bills: { some: { id: "bill-race-1" } } },
+      });
+      expect(mockTx.summary.create).not.toHaveBeenCalled();
+      expect(mockTx.bill.update).not.toHaveBeenCalled();
+      expect(outcome).toEqual({
+        attempted: 1,
+        persisted: 1,
+        summarized: 0,
+        categorized: 0,
+        failed: 0,
+        deadLettered: 0,
+        errors: [],
+      });
+    });
+
+    it("loads bounded fullText from DB inside processSummaryBatchStep only for needsSummaryItems lacking inline fullText", async () => {
+      mockDb.bill.findMany.mockResolvedValueOnce([
+        {
+          id: "bill-db-load-1",
+          fullText: "Loaded bill text from DB ".repeat(20),
+        },
+      ]);
+
+      const batch: SummarizeWorkBatch = {
+        categories: DYNAMIC_CATEGORIES,
+        billCount: 2,
+        executiveOrderCount: 0,
+        items: [
+          {
+            id: "bill-db-load-1",
+            kind: "bill",
+            title: "Needs Summary Without Serialized Text",
+            hasStandardSummary: false,
+            standardSummaryText: null,
+            hasCategories: false,
+          },
+          {
+            id: "bill-cat-only-no-text",
+            kind: "bill",
+            title: "Already Summarized No Text Needed",
+            hasStandardSummary: true,
+            standardSummaryText: VALID_SUMMARY,
+            hasCategories: false,
+          },
+        ],
+      };
+
+      mockSummarizeAndCategorizeItems.mockResolvedValueOnce([
+        {
+          id: "bill-db-load-1",
+          ok: true,
+          summary: VALID_SUMMARY,
+          keyPoints: ["Loaded text cleanly."],
+          impactAreas: ["Public"],
+          categories: ["infrastructure"],
+          confidence: 0.91,
+          aiModel: "deepseek/deepseek-v4.1-flash-1017",
+        },
+      ]);
+      mockCategorizeLegislationItem.mockResolvedValueOnce({
+        categories: ["healthcare"],
+        aiModel: "deepseek/deepseek-v4.1-flash-1017",
+      });
+
+      const outcome = await processSummaryBatchStep(batch);
+
+      expect(mockDb.bill.findMany).toHaveBeenCalledTimes(1);
+      expect(mockDb.bill.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ["bill-db-load-1"] } },
+        select: { id: true, fullText: true },
+      });
+      expect(mockDb.executiveOrder.findMany).not.toHaveBeenCalled();
+      expect(mockSummarizeAndCategorizeItems).toHaveBeenCalledWith(
+        [
+          {
+            id: "bill-db-load-1",
+            title: "Needs Summary Without Serialized Text",
+            text: "Loaded bill text from DB ".repeat(20),
+            kind: "bill",
+          },
+        ],
+        DYNAMIC_CATEGORIES
+      );
+      expect(outcome).toMatchObject({
+        attempted: 2,
+        persisted: 2,
+        summarized: 1,
+        categorized: 2,
+        failed: 0,
+      });
+
+      // Also verify oversized DB fullText (> 400k default Gemini cap) is bounded cleanly
+      jest.clearAllMocks();
+      process.env.OPENROUTER_MAX_INPUT_CHARS = "300";
+      process.env.GEMINI_MAX_INPUT_CHARS = "500";
+      mockDb.bill.findMany.mockResolvedValueOnce([
+        {
+          id: "bill-db-huge",
+          fullText: "Z".repeat(2_000),
+        },
+      ]);
+      mockSummarizeAndCategorizeItems.mockResolvedValueOnce([
+        {
+          id: "bill-db-huge",
+          ok: true,
+          summary: VALID_SUMMARY,
+          keyPoints: ["Bounded DB fullText."],
+          impactAreas: ["Public"],
+          categories: ["infrastructure"],
+          confidence: 0.9,
+          aiModel: "deepseek/deepseek-v4.1-flash-1017",
+        },
+      ]);
+
+      const hugeOutcome = await processSummaryBatchStep({
+        categories: DYNAMIC_CATEGORIES,
+        billCount: 1,
+        executiveOrderCount: 0,
+        items: [
+          {
+            id: "bill-db-huge",
+            kind: "bill",
+            title: "Oversized DB FullText Bill",
+            hasStandardSummary: false,
+            standardSummaryText: null,
+            hasCategories: false,
+          },
+        ],
+      });
+
+      expect(hugeOutcome.persisted).toBe(1);
+      const passedInput = mockSummarizeAndCategorizeItems.mock.calls[0][0][0] as {
+        text: string;
+      };
+      expect(passedInput.text.length).toBeLessThanOrEqual(500);
+      expect(passedInput.text).toContain("truncated due to length");
+    });
   });
 
   describe("job-runs steps & summarizeLegislationWorkflow orchestration", () => {
@@ -1311,18 +1536,25 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
     it("runs full summarizeLegislationWorkflow lifecycle and revalidates paths when persisted > 0", async () => {
       mockDb.jobRun.create.mockResolvedValueOnce({ id: "jr-wf-1" });
       mockDb.executiveOrder.findMany.mockResolvedValueOnce([]);
-      mockDb.bill.findMany.mockResolvedValueOnce([
-        {
-          id: "bill-wf-1",
-          billType: "hr",
-          billNumber: 55,
-          title: "Grid Modernization Act",
-          shortTitle: null,
-          fullText: "Full legislative text ".repeat(20),
-          summaries: [],
-          categories: [],
-        },
-      ]);
+      mockDb.bill.findMany
+        .mockResolvedValueOnce([
+          {
+            id: "bill-wf-1",
+            billType: "hr",
+            billNumber: 55,
+            title: "Grid Modernization Act",
+            shortTitle: null,
+            fullText: "Full legislative text ".repeat(20),
+            summaries: [],
+            categories: [],
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: "bill-wf-1",
+            fullText: "Full legislative text ".repeat(20),
+          },
+        ]);
       mockSummarizeAndCategorizeItems.mockResolvedValueOnce([
         {
           id: "bill-wf-1",
@@ -1364,6 +1596,65 @@ describe("Durable summarization + categorization workflow and dead-letter steps"
           itemsFailed: 0,
           completedAt: expect.any(Date),
         }),
+      });
+    });
+
+    it("skips overlapping summarizeLegislationWorkflow triggers when an active RUNNING lease exists without creating a competing JobRun or calling LLMs", async () => {
+      mockDb.jobRun.findFirst.mockResolvedValueOnce({ id: "jr-active-lease" });
+
+      const result = await summarizeLegislationWorkflow({
+        executionId: "sched-overlap-1",
+      });
+
+      expect(mockDb.$executeRaw).toHaveBeenCalledTimes(1);
+      const lockText = (
+        mockDb.$executeRaw.mock.calls[0][0] as TemplateStringsArray
+      ).join("");
+      expect(lockText).toContain("pg_advisory_xact_lock(948272)");
+
+      expect(mockDb.jobRun.updateMany).toHaveBeenCalledWith({
+        where: {
+          jobName: "summarize-legislation",
+          status: "RUNNING",
+          startedAt: { lte: expect.any(Date) },
+        },
+        data: expect.objectContaining({
+          status: "FAILED",
+          completedAt: expect.any(Date),
+        }),
+      });
+      expect(mockDb.jobRun.findFirst).toHaveBeenCalledWith({
+        where: {
+          jobName: "summarize-legislation",
+          status: "RUNNING",
+          startedAt: { gt: expect.any(Date) },
+        },
+        orderBy: { startedAt: "desc" },
+        select: { id: true },
+      });
+
+      expect(mockDb.jobRun.create).not.toHaveBeenCalled();
+      expect(mockDb.jobRun.update).not.toHaveBeenCalled();
+      expect(mockDb.category.findMany).not.toHaveBeenCalled();
+      expect(mockSummarizeAndCategorizeItems).not.toHaveBeenCalled();
+      expect(mockCategorizeLegislationItem).not.toHaveBeenCalled();
+      expect(mockRevalidatePath).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        jobRunId: "jr-active-lease",
+        executionId: "sched-overlap-1",
+        skipped: true,
+        skippedReason: "active-run-in-progress",
+        activeJobRunId: "jr-active-lease",
+        selectedBills: 0,
+        selectedExecutiveOrders: 0,
+        attempted: 0,
+        persisted: 0,
+        summarized: 0,
+        categorized: 0,
+        failed: 0,
+        deadLettered: 0,
+        revalidated: false,
+        errors: [],
       });
     });
 

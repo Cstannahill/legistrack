@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { fetchBillDetails, fetchBillText } from "@/lib/api/congress";
+import { resolveBillStatusFromText } from "@/lib/ingestion/bill-status";
 import { BillStatus } from "@prisma/client";
 import type { SummaryType } from "@/lib/ai/summarizer";
 import type { OpenRouterModel } from "@/lib/ai/summarizer-openrouter";
@@ -45,75 +46,7 @@ const SUPPORTED_MODELS: SummaryProvider[] = [
 const defaultLogger: LoggerFn = (message) => console.log(message);
 
 export function determineBillStatus(latestActionText?: string): BillStatus {
-  if (!latestActionText) return "INTRODUCED";
-
-  const actionLower = latestActionText.toLowerCase();
-
-  if (
-    actionLower.includes("became public law") ||
-    actionLower.includes("signed by president")
-  ) {
-    return "BECAME_LAW";
-  }
-
-  if (
-    actionLower.includes("vetoed") ||
-    actionLower.includes("returned unsigned")
-  ) {
-    return "VETOED";
-  }
-
-  if (
-    actionLower.includes("presented to president") ||
-    actionLower.includes("sent to president")
-  ) {
-    return "PRESENTED_TO_PRESIDENT";
-  }
-
-  if (
-    actionLower.includes("conference") ||
-    actionLower.includes("resolving differences")
-  ) {
-    return "RESOLVING_DIFFERENCES";
-  }
-
-  if (
-    actionLower.includes("passed senate") ||
-    actionLower.includes("agreed to in senate")
-  ) {
-    return "PASSED_SENATE";
-  }
-
-  if (
-    actionLower.includes("passed house") ||
-    actionLower.includes("agreed to in house")
-  ) {
-    return "PASSED_HOUSE";
-  }
-
-  if (
-    actionLower.includes("reported by committee") ||
-    actionLower.includes("committee discharged")
-  ) {
-    return "REPORTED_BY_COMMITTEE";
-  }
-
-  if (
-    actionLower.includes("referred to") ||
-    actionLower.includes("committee")
-  ) {
-    return "REFERRED_TO_COMMITTEE";
-  }
-
-  if (
-    actionLower.includes("failed") ||
-    actionLower.includes("rejected") ||
-    actionLower.includes("not agreed to")
-  ) {
-    return "FAILED";
-  }
-
-  return "INTRODUCED";
+  return resolveBillStatusFromText(latestActionText);
 }
 
 /**

@@ -8,6 +8,7 @@ import {
 } from "@/lib/llm/types";
 
 const DEFAULT_GEMINI_FALLBACK_DAILY_LIMIT = 20;
+const DEFAULT_GEMINI_TIMEOUT_MS = 60_000;
 
 export interface CallGeminiStructuredOptions<T> {
   systemInstruction: string;
@@ -48,6 +49,22 @@ export function getGeminiFallbackDailyLimit(
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 0) {
     return DEFAULT_GEMINI_FALLBACK_DAILY_LIMIT;
+  }
+  return parsed;
+}
+
+/**
+ * Parses `GEMINI_TIMEOUT_MS` as a strictly positive integer (default 60s),
+ * preventing `@google/genai` from leaving Undici requests unbounded.
+ */
+export function getGeminiTimeoutMs(
+  envObj: Partial<NodeJS.ProcessEnv> = process.env
+): number {
+  const raw = envObj.GEMINI_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_GEMINI_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_GEMINI_TIMEOUT_MS;
   }
   return parsed;
 }
@@ -149,7 +166,10 @@ export async function callGeminiStructured<T>(
   });
 
   try {
-    const client = new GoogleGenAI({ apiKey });
+    const client = new GoogleGenAI({
+      apiKey,
+      httpOptions: { timeout: getGeminiTimeoutMs() },
+    });
     const interaction = await client.interactions.create({
       model: GEMINI_FALLBACK_MODEL,
       store: false,

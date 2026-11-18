@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { resolveBillStatusFromText } from "@/lib/ingestion/bill-status";
 import { getCongressGovBillUrl } from "@/lib/utils/congress-url";
 import {
   CongressClient,
@@ -57,33 +58,6 @@ const defaultLogger: IngestionLogger = {
   warn: (message, metadata) => console.warn(message, metadata ?? ""),
   error: (message, metadata) => console.error(message, metadata ?? ""),
 };
-
-const STATUS_MAPPINGS: Array<{ match: RegExp; status: BillStatus }> = [
-  { match: /became (public )?law|signed by president/i, status: "BECAME_LAW" },
-  { match: /vetoed|returned unsigned/i, status: "VETOED" },
-  {
-    match: /presented to president|sent to president/i,
-    status: "PRESENTED_TO_PRESIDENT",
-  },
-  { match: /\b(?:failed|rejected|not agreed to)\b/i, status: "FAILED" },
-  {
-    match: /resolving differences|conference/i,
-    status: "RESOLVING_DIFFERENCES",
-  },
-  {
-    match: /passed senate|senate passed|(?<!\bnot\s+)agreed to in senate/i,
-    status: "PASSED_SENATE",
-  },
-  {
-    match: /passed house|house passed|(?<!\bnot\s+)agreed to in house/i,
-    status: "PASSED_HOUSE",
-  },
-  {
-    match: /reported by committee|committee reported|committee discharged/i,
-    status: "REPORTED_BY_COMMITTEE",
-  },
-  { match: /referred to|committee/i, status: "REFERRED_TO_COMMITTEE" },
-];
 
 type BillPreservableField =
   | "officialTitle"
@@ -242,10 +216,7 @@ export function resolveBillStatus(
 ): BillStatusResolution {
   const latestActionText =
     bill.latestAction?.text?.trim() || actions[0]?.text?.trim() || "";
-  const resolved = STATUS_MAPPINGS.find(({ match }) =>
-    match.test(latestActionText)
-  );
-  const status: BillStatus = resolved?.status ?? "INTRODUCED";
+  const status = resolveBillStatusFromText(latestActionText);
 
   const statusDateRaw = bill.latestAction?.actionDate ?? actions[0]?.actionDate;
   const statusDate = parseDate(statusDateRaw, fallbackDate) ?? fallbackDate;

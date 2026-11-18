@@ -234,6 +234,34 @@ describe("Ingestion Prisma persistence & text-backfill services", () => {
 
       expect(
         resolveBillStatus(
+          { latestAction: { text: "Disagreed to in House" } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("FAILED");
+
+      expect(
+        resolveBillStatus(
+          { latestAction: { text: "Disagreed to in Senate" } },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("FAILED");
+
+      expect(
+        resolveBillStatus(
+          {
+            latestAction: {
+              text: "Motion to proceed to consideration of measure disagreed to in Senate.",
+            },
+          },
+          [],
+          fallbackDate
+        ).status
+      ).toBe("FAILED");
+
+      expect(
+        resolveBillStatus(
           { latestAction: { text: "Failed in committee" } },
           [],
           fallbackDate

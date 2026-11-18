@@ -193,6 +193,7 @@ describe("Unified OpenRouter -> Gemini router & legacy migration", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     resetOpenRouterRouterStateForTests();
+    jest.spyOn(console, "log").mockImplementation(() => {});
     process.env = { ...originalEnv };
     delete process.env.OPENROUTER_API_KEYS;
     delete process.env.OPENROUTER_MODELS;
@@ -209,6 +210,10 @@ describe("Unified OpenRouter -> Gemini router & legacy migration", () => {
       delete process.env[`OPENROUTER_KEY_${i}`];
     }
     process.env.OPENROUTER_API_KEYS = "or-key-1,or-key-2";
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   afterAll(() => {
@@ -619,47 +624,220 @@ describe("Unified OpenRouter -> Gemini router & legacy migration", () => {
     expect(mockCallGeminiStructured.mock.calls[0][0].itemIds).toEqual(["bill-2"]);
   });
 
-  it("retries each item individually through OpenRouter when a 3-item batch returns malformed JSON", async () => {
+  it("cools down malformed batch outputs and continues cascade to OpenRouter models 2-3 before a single Gemini batch fallback", async () => {
     process.env.OPENROUTER_API_KEYS = "or-key-1";
 
+    // Subcase A: Model 1 returns malformed JSON -> cools down model 1 and succeeds on model 2 in batch mode without Gemini
     mockOpenAI.__mockCreate
       .mockResolvedValueOnce(makeCompletionResponse("{ invalid json <<<"))
       .mockResolvedValueOnce(
         makeCompletionResponse({
-          id: "bill-a",
-          summary: VALID_SUMMARY,
-          keyPoints: ["Point A"],
-          impactAreas: ["Area A"],
-          categories: ["infrastructure"],
-        })
-      )
-      .mockResolvedValueOnce(
-        makeCompletionResponse({
-          id: "bill-b",
-          summary: VALID_SUMMARY,
-          keyPoints: ["Point B"],
-          impactAreas: ["Area B"],
-          categories: ["healthcare"],
-        })
-      )
-      .mockResolvedValueOnce(
-        makeCompletionResponse({
-          id: "bill-c",
-          summary: VALID_SUMMARY,
-          keyPoints: ["Point C"],
-          impactAreas: ["Area C"],
-          categories: ["environment-climate"],
+          items: [
+            {
+              id: "bill-a",
+              summary: VALID_SUMMARY,
+              keyPoints: ["Point A"],
+              impactAreas: ["Area A"],
+              categories: ["infrastructure"],
+            },
+            {
+              id: "bill-b",
+              summary: VALID_SUMMARY,
+              keyPoints: ["Point B"],
+              impactAreas: ["Area B"],
+              categories: ["healthcare"],
+            },
+            {
+              id: "bill-c",
+              summary: VALID_SUMMARY,
+              keyPoints: ["Point C"],
+              impactAreas: ["Area C"],
+              categories: ["environment-climate"],
+            },
+          ],
         })
       );
 
-    const outcomes = await summarizeAndCategorizeItems(
+    const recoveredOnModel2 = await summarizeAndCategorizeItems(
       [makeItem("bill-a"), makeItem("bill-b"), makeItem("bill-c")],
       SAMPLE_CATEGORIES
     );
 
-    expect(outcomes.every((o) => o.ok)).toBe(true);
-    expect(mockOpenAI.__mockCreate).toHaveBeenCalledTimes(4);
+    expect(recoveredOnModel2.every((o) => o.ok)).toBe(true);
+    expect(
+      recoveredOnModel2.every((o) => o.ok && o.aiModel === "xiaomi/mimo-v2.6-flash")
+    ).toBe(true);
+    expect(mockOpenAI.__mockCreate).toHaveBeenCalledTimes(2);
     expect(mockCallGeminiStructured).not.toHaveBeenCalled();
+
+    // Subcase B: Models 1, 2, 3 all return malformed batch JSON -> all 3 tried & cooled down -> 1 Gemini batch call (NOT 3 single calls)
+    resetOpenRouterRouterStateForTests();
+    mockOpenAI.__mockCreate.mockClear();
+    mockCallGeminiStructured.mockClear();
+
+    mockOpenAI.__mockCreate
+      .mockResolvedValueOnce(makeCompletionResponse("{ invalid json <<<"))
+      .mockResolvedValueOnce(makeCompletionResponse({ wrongTopLevelKey: [] }))
+      .mockResolvedValueOnce(makeCompletionResponse({ items: [] }));
+
+    mockCallGeminiStructured.mockResolvedValueOnce({
+      data: {
+        items: [
+          {
+            id: "bill-a",
+            summary: VALID_SUMMARY,
+            keyPoints: ["Gemini batch A"],
+            impactAreas: ["Area A"],
+            categories: ["infrastructure"],
+            confidence: 0.9,
+          },
+          {
+            id: "bill-b",
+            summary: VALID_SUMMARY,
+            keyPoints: ["Gemini batch B"],
+            impactAreas: ["Area B"],
+            categories: ["healthcare"],
+            confidence: 0.9,
+          },
+          {
+            id: "bill-c",
+            summary: VALID_SUMMARY,
+            keyPoints: ["Gemini batch C"],
+            impactAreas: ["Area C"],
+            categories: ["environment-climate"],
+            confidence: 0.9,
+          },
+        ],
+      },
+      model: GEMINI_FALLBACK_MODEL,
+    });
+
+    const geminiFallbackBatch = await summarizeAndCategorizeItems(
+      [makeItem("bill-a"), makeItem("bill-b"), makeItem("bill-c")],
+      SAMPLE_CATEGORIES
+    );
+
+    expect(geminiFallbackBatch.every((o) => o.ok)).toBe(true);
+    expect(
+      mockOpenAI.__mockCreate.mock.calls.map(([p]) => (p as { model: string }).model)
+    ).toEqual([
+      "deepseek/deepseek-v4.1-flash-1017",
+      "xiaomi/mimo-v2.6-flash",
+      "z-ai/glm-5.3-flash",
+    ]);
+    expect(mockCallGeminiStructured).toHaveBeenCalledTimes(1);
+    expect(mockCallGeminiStructured).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schema: SummaryAndCategoryBatchSchema,
+        itemIds: ["bill-a", "bill-b", "bill-c"],
+      })
+    );
+  });
+
+  it("cools down (apiKey, model) on unstatused network/timeout errors during batch calls and batches all unrecovered missing items into ONE Gemini call", async () => {
+    process.env.OPENROUTER_API_KEYS = "or-key-1";
+
+    const apiConnectionError = Object.assign(
+      new Error("Connection error."),
+      { name: "APIConnectionError" }
+    );
+    const timeoutErr = Object.assign(new Error("connect ETIMEDOUT"), {
+      code: "ETIMEDOUT",
+    });
+
+    // Subcase A: Batch call hits unstatused APIConnectionError on model 1, ETIMEDOUT on model 2, succeeds partially on model 3 (1 of 4 valid)
+    // Then 3 missing items run single-item OpenRouter recovery (model 1 & 2 are ALREADY cooled down, so ONLY model 3 is called 3 times and fails 429)
+    // Finally, all 3 unrecovered items fall back to Gemini in ONE batch call!
+    mockOpenAI.__mockCreate
+      .mockRejectedValueOnce(apiConnectionError) // batch m1 (unstatused -> cooled down)
+      .mockRejectedValueOnce(timeoutErr) // batch m2 (unstatused -> cooled down)
+      .mockResolvedValueOnce(
+        makeCompletionResponse({
+          items: [
+            {
+              id: "bill-1",
+              summary: VALID_SUMMARY,
+              keyPoints: ["Model 3 succeeded for bill 1."],
+              impactAreas: ["States"],
+              categories: ["infrastructure"],
+            },
+          ],
+        })
+      ) // batch m3 returns only bill-1; bill-2, bill-3, bill-4 are missing
+      // Per-item OpenRouter recovery for bill-2, bill-3, bill-4: m1 & m2 skipped due to cooldown!
+      // bill-2 tries m3 -> 429 (cools down m3 too!)
+      .mockRejectedValueOnce(makeOpenRouterError(429, "Rate limit m3"));
+
+    mockCallGeminiStructured.mockResolvedValueOnce({
+      data: {
+        items: [
+          {
+            id: "bill-2",
+            summary: VALID_SUMMARY,
+            keyPoints: ["Gemini recovered 2"],
+            impactAreas: ["States"],
+            categories: ["healthcare"],
+            confidence: 0.9,
+          },
+          {
+            id: "bill-3",
+            summary: VALID_SUMMARY,
+            keyPoints: ["Gemini recovered 3"],
+            impactAreas: ["States"],
+            categories: ["environment-climate"],
+            confidence: 0.9,
+          },
+          {
+            id: "bill-4",
+            summary: VALID_SUMMARY,
+            keyPoints: ["Gemini recovered 4"],
+            impactAreas: ["States"],
+            categories: ["infrastructure"],
+            confidence: 0.9,
+          },
+        ],
+      },
+      model: GEMINI_FALLBACK_MODEL,
+    });
+
+    const outcomes = await summarizeAndCategorizeItems(
+      [
+        makeItem("bill-1"),
+        makeItem("bill-2"),
+        makeItem("bill-3"),
+        makeItem("bill-4"),
+      ],
+      SAMPLE_CATEGORIES
+    );
+
+    expect(outcomes).toHaveLength(4);
+    expect(outcomes[0]).toMatchObject({
+      id: "bill-1",
+      ok: true,
+      aiModel: "z-ai/glm-5.3-flash",
+    });
+    expect(outcomes.slice(1).every((o) => o.ok && o.aiModel === "gemini-3.8-flash")).toBe(
+      true
+    );
+
+    // m1 & m2 were NOT retried during single-item recovery because unstatused network errors cooled them down!
+    expect(
+      mockOpenAI.__mockCreate.mock.calls.map(([p]) => (p as { model: string }).model)
+    ).toEqual([
+      "deepseek/deepseek-v4.1-flash-1017",
+      "xiaomi/mimo-v2.6-flash",
+      "z-ai/glm-5.3-flash",
+      "z-ai/glm-5.3-flash",
+    ]);
+
+    // Exactly ONE Gemini call for all 3 unrecovered items (NOT 3 single calls)
+    expect(mockCallGeminiStructured).toHaveBeenCalledTimes(1);
+    expect(mockCallGeminiStructured).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schema: SummaryAndCategoryBatchSchema,
+        itemIds: ["bill-2", "bill-3", "bill-4"],
+      })
+    );
   });
 
   it("truncates oversized input text cleanly via OPENROUTER_MAX_INPUT_CHARS (default 120000) without throwing", async () => {
@@ -727,6 +905,10 @@ describe("Unified OpenRouter -> Gemini router & legacy migration", () => {
     expect(resolveProvider("ANTHROPIC")).toBe("anthropic");
     expect(resolveProvider("openrouter")).toBe("openrouter");
     expect(determineBillStatus("Signed by President.")).toBe("BECAME_LAW");
+    expect(determineBillStatus("Disagreed to in House.")).toBe("FAILED");
+    expect(determineBillStatus("Disagreed to in Senate.")).toBe("FAILED");
+    expect(determineBillStatus("Not agreed to in House.")).toBe("FAILED");
+    expect(determineBillStatus("Failed in committee.")).toBe("FAILED");
 
     // summarizeBillStandard defaults to OpenRouter router when AI_MODEL is unset
     mockDb.bill.findUnique.mockResolvedValueOnce({
