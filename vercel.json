@@ -1,0 +1,35 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "src/app/api/schedules/ingest-legislation/route.ts": {
+      "experimentalTriggers": [{ "type": "schedule/v1beta" }]
+    },
+    "src/app/api/schedules/ingest-eo/route.ts": {
+      "experimentalTriggers": [{ "type": "schedule/v1beta" }]
+    },
+    "src/app/api/schedules/update-texts/route.ts": {
+      "experimentalTriggers": [{ "type": "schedule/v1beta" }]
+    },
+    "src/app/api/schedules/summarize-legislation/route.ts": {
+      "experimentalTriggers": [{ "type": "schedule/v1beta" }]
+    }
+  },
+  "schedules": {
+    "ingest-legislation": {
+      "schedule": "0 */6 * * *",
+      "function": "api/schedules/ingest-legislation"
+    },
+    "ingest-eo": {
+      "schedule": "0 */12 * * *",
+      "function": "api/schedules/ingest-eo"
+    },
+    "update-texts": {
+      "schedule": "0 */4 * * *",
+      "function": "api/schedules/update-texts"
+    },
+    "summarize-legislation": {
+      "schedule": "*/20 * * * *",
+      "function": "api/schedules/summarize-legislation"
+    }
+  }
+}
